@@ -18,6 +18,10 @@ from mtg_analyzer.combos.client import CommanderSpellbookClient
 from mtg_analyzer.combos.store import ComboStore
 from mtg_analyzer.data.bulk import BulkDataManager
 from mtg_analyzer.data.db import CardDatabase
+from mtg_analyzer.data.inventory_store import InventoryStore
+from mtg_analyzer.ingest.decklist import parse_decklist
+from mtg_analyzer.ingest.inventory import parse_inventory_csv
+from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 from mtg_analyzer.models.combo import Combo
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
 from mtg_analyzer.rules.store import RulesStore
@@ -201,6 +205,69 @@ def _cmd_combos_find(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_deck_show(args: argparse.Namespace) -> int:
+    parsed = parse_decklist(Path(args.file).read_text(encoding="utf-8"))
+    db = CardDatabase()
+    try:
+        deck = resolve_deck(db, parsed)
+    finally:
+        db.close()
+    print(f"Format: {parsed.source_format}  |  total cards: {deck.card_total()}")
+    for c in deck.commanders:
+        ci = "".join(c.card.color_identity) if c.card else "?"
+        print(f"Commander: {c.requested_name}  [{ci or 'C'}]")
+    counts: dict[str, int] = {}
+    for e in deck.entries:
+        counts[e.section] = counts.get(e.section, 0) + e.quantity
+    print("Sections: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    if deck.unresolved:
+        print(f"\nUnresolved ({len(deck.unresolved)}):")
+        for e in deck.unresolved:
+            print(f"  {e.quantity}x {e.requested_name}")
+    return 0
+
+
+def _cmd_inventory_import(args: argparse.Namespace) -> int:
+    items = parse_inventory_csv(Path(args.file).read_text(encoding="utf-8"))
+    db = CardDatabase()
+    try:
+        inventory = resolve_inventory(db, items)
+    finally:
+        db.close()
+    store = InventoryStore()
+    try:
+        rows = store.replace(inventory)
+    finally:
+        store.close()
+    print(f"Imported {rows:,} rows: {inventory.distinct_cards:,} distinct cards, "
+          f"{inventory.total_quantity:,} total. Unresolved: {len(inventory.unresolved)}")
+    for item in inventory.unresolved[:10]:
+        print(f"  ? {item.name} ({item.set_code} {item.collector_number})")
+    return 0
+
+
+def _cmd_inventory_show(args: argparse.Namespace) -> int:
+    store = InventoryStore()
+    db = CardDatabase()
+    try:
+        if args.card:
+            card = db.get_by_name(args.card)
+            if card is None or not card.oracle_id:
+                print(f"No card found matching {args.card!r}.", file=sys.stderr)
+                return 1
+            print(f"{card.name}: owned {store.owned(card.oracle_id)}")
+            for p in store.printings_for(card.oracle_id):
+                foil = " foil" if p.foil else ""
+                print(f"  {p.set_code} #{p.collector_number}{foil} x{p.quantity}")
+        else:
+            print(f"Inventory: {store.distinct_cards():,} distinct cards, "
+                  f"{store.total_quantity():,} total copies")
+    finally:
+        db.close()
+        store.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mtg", description="MTG Analyzer CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -246,6 +313,23 @@ def main(argv: list[str] | None = None) -> int:
     c_find.add_argument("file")
     c_find.add_argument("--limit", type=int, default=20)
     c_find.set_defaults(func=_cmd_combos_find)
+
+    deck = sub.add_parser("deck", help="decklist import").add_subparsers(
+        dest="deck_command", required=True
+    )
+    d_show = deck.add_parser("show", help="parse + resolve a decklist file")
+    d_show.add_argument("file")
+    d_show.set_defaults(func=_cmd_deck_show)
+
+    inv = sub.add_parser("inventory", help="card collection").add_subparsers(
+        dest="inventory_command", required=True
+    )
+    i_import = inv.add_parser("import", help="import a collection CSV (e.g. ManaBox)")
+    i_import.add_argument("file")
+    i_import.set_defaults(func=_cmd_inventory_import)
+    i_show = inv.add_parser("show", help="inventory stats, or owned count for --card")
+    i_show.add_argument("--card", help="show owned count + printings for this card")
+    i_show.set_defaults(func=_cmd_inventory_show)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

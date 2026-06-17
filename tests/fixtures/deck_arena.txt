@@ -1,0 +1,11 @@
+// A Moxfield/Arena-style export
+Commander
+1 Llanowar Elves (M19) 314
+
+Deck
+1 Sol Ring (LTC) 284
+1 Delver of Secrets (ISD) 51 *F*
+1 Totally Fake Card
+
+Sideboard
+SB: 1 Sol Ring

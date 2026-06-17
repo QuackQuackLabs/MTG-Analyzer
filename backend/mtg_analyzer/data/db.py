@@ -206,6 +206,28 @@ class CardDatabase:
         ).fetchall()
         return [c for r in rows if (c := self._card_from_row(r))]
 
+    def get_by_scryfall_id(self, scryfall_id: str) -> Card | None:
+        """Resolve a specific printing id to its card (via the printings table)."""
+        row = self.conn.execute(
+            "SELECT c.json FROM printings p JOIN cards c ON c.oracle_id = p.oracle_id "
+            "WHERE p.id = ?",
+            (scryfall_id,),
+        ).fetchone()
+        return self._card_from_row(row)
+
+    def get_by_set_collector(self, set_code: str, collector_number: str) -> Card | None:
+        """Resolve a set code + collector number to its card.
+
+        Note: the Oracle Cards bulk stores one representative printing per card, so this
+        hits only for that printing; callers fall back to name resolution otherwise.
+        """
+        row = self.conn.execute(
+            "SELECT c.json FROM printings p JOIN cards c ON c.oracle_id = p.oracle_id "
+            "WHERE p.set_code = ? COLLATE NOCASE AND p.collector_number = ? COLLATE NOCASE",
+            (set_code, collector_number),
+        ).fetchone()
+        return self._card_from_row(row)
+
     def get_rulings(self, oracle_id: str) -> list[Ruling]:
         rows = self.conn.execute(
             "SELECT oracle_id, source, published_at, comment FROM rulings "

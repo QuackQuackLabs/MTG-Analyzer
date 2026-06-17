@@ -85,13 +85,21 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update inline as work com
       client header/chunk/429 behavior via MockTransport. CLI `mtg data refresh` / `mtg card`.
 - **Ingested 38,178 cards + 76,805 rulings locally (~9 s).** Name resolution verified on real data.
 
-### Phase 2 — Ingest: decks & inventory  `[ ]`
-- [ ] Tolerant decklist parser: `[SB:] N[x] Name [(SET) Number]`, header/blank-line/`//` handling →
-      covers Arena/Moxfield/Archidekt/MWS text. Designate commander(s).
-- [ ] Inventory CSV parser — target **ManaBox** first (has set+collector# *and* Scryfall ID), then
-      Deckbox / Moxfield / Archidekt collection CSVs (parse by header name, not position).
-- [ ] Resolve every line to Scryfall identity; report unresolved/ambiguous lines.
-- [ ] Tests with sample deck files + a ManaBox CSV fixture.
+### Phase 2 — Ingest: decks & inventory  `[x]`
+- [x] **Decklist parser** (`ingest/decklist.py`): tolerant `[SB:] N[x] Name [(SET) [#]] [*F*]
+      [[Category]]` + section headers + `//`/`#` comments. Covers Archidekt (category tags, commander
+      via `[Commander]`), Moxfield/Arena/MTGO. Card-name parens preserved (set group is space-free).
+- [x] **Inventory CSV parser** (`ingest/inventory.py`): ManaBox-first, header-driven (matches by
+      normalized header, not position) → also reads Moxfield/Deckbox/Archidekt collection CSVs.
+- [x] **Resolution** (`ingest/resolve.py`): **name-first** → oracle_id (reliable, unique), with
+      scryfall_id / set+collector as fallbacks. Unresolved entries surfaced, not dropped.
+      `data/inventory_store.py` persists inventory (per-printing rows, aggregate by oracle_id).
+      Models: `models/deck.py`, `models/inventory.py`. CLI `mtg deck show`, `mtg inventory import|show`.
+- [x] Tests (`test_ingest.py`): Archidekt/Arena parsing (foil, categories, the `Erase (Not the
+      Urza's Legacy One)` name edge case), deck resolution, ManaBox CSV, inventory aggregation, and a
+      regression for name-first (a mismatched set+collector must not override the name).
+- **Validated on the real 38k-card DB:** Atraxa deck resolves to `[BGUW]`; a ManaBox CSV aggregates
+  Sol Ring to owned 3 across 2 printings. Drop real exports in `samples/` to harden further.
 
 ### Phase 3 — Deck analysis & validation  `[ ]` ← **first user-facing milestone**
 - [ ] **Legality validation:** 100 cards, singleton (basics exempt), commander is legal commander,
@@ -215,4 +223,13 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   3,294 rules + 730 glossary terms (effective 2026-04-17). Fixed two bugs found by spot-checking
   real data: subrule expansion (702.19 wrongly matched 702.190 via LIKE → switched to GLOB
   `[a-z]`), and search (term-AND too strict → bm25-ranked OR). 27 tests, ruff/mypy clean.
-  Next: **Phase 2 — deck & inventory ingest.**
+- **2026-06-17** — **Combo data folded in** (completes the rules/interaction layer): Commander
+  Spellbook live find-my-combos + per-card search, cached locally (on-demand, not a full mirror —
+  paging 90k tripped their rate limit). 37 tests.
+- **2026-06-17** — **Phase 2 complete.** Decklist parser (Archidekt/Moxfield/Arena/MTGO),
+  ManaBox-first header-driven inventory CSV parser, name-first resolution to oracle_id, inventory
+  persistence (aggregate by card, keep printings). CLI `mtg deck show`, `mtg inventory import|show`.
+  44 tests; ruff/mypy clean. Caught + fixed a resolution bug via real-data validation: set+collector
+  tried before name could match a *different* card's representative printing (Sol Ring split into 2
+  oracles) → switched to name-first + regression test. `samples/` added for real exports.
+  Next: **Phase 3 — deck analysis & validation** (first user-facing milestone).

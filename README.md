@@ -50,6 +50,14 @@ mtg combos card "Thassa's Oracle"      # combos that use a card (live query, cac
 mtg combos find mydeck.txt             # combos present + one-card-away (live, authoritative)
 ```
 
+**Import your decks and collection:**
+
+```bash
+mtg deck show samples/my-deck.txt          # parse + resolve an Archidekt/Moxfield/Arena export
+mtg inventory import samples/my-cards.csv  # import a ManaBox (or Moxfield/Deckbox) collection CSV
+mtg inventory show --card "Sol Ring"       # owned count + printings
+```
+
 ## For contributors / agents
 
 Read **[CLAUDE.md](CLAUDE.md)** and **[project-plan.md](project-plan.md)** first. Domain knowledge
