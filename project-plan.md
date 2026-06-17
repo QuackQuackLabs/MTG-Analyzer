@@ -70,16 +70,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update inline as work com
 - [x] FastAPI app + `/health` route (CORS for Vite origin); Vite/React-TS app shows backend status.
 - [x] Initial git commit.
 
-### Phase 1 — Card data layer  `[ ]`
-- [ ] `data/`: `/bulk-data` poller → download **Oracle Cards** + **Rulings** (gzip), store metadata,
-      refresh only when `updated_at` changes.
-- [ ] Ingest bulk JSON into SQLite; schema keyed on `oracle_id` (+ a printings table keyed on `id`
-      for price/set/image). Index name, color_identity, type_line, legalities.commander, cmc.
-- [ ] `models/Card` (Pydantic) with DFC/`card_faces` handling driven off `layout`.
-- [ ] Scryfall live client (httpx, custom UA/Accept, ~100 ms throttle, 429 backoff): `/cards/named`
-      (fuzzy/exact), `/cards/autocomplete`, `/cards/search`, `POST /cards/collection` (≤75/batch).
-- [ ] Rulings lookup (from bulk file, join on `oracle_id`).
-- [ ] Tests: ingest a small fixture, identity resolution, DFC parsing.
+### Phase 1 — Card data layer  `[x]`
+- [x] `data/bulk.py`: `/bulk-data` poller → stream-download **Oracle Cards** + **Rulings**, manifest
+      tracks `updated_at`, re-downloads only when it changes. (httpx decodes gzip → plain JSON on disk.)
+- [x] `data/db.py`: streaming ijson ingest into SQLite. `cards` keyed on `oracle_id` (+ `printings`
+      keyed on `id` for price/set/image, + `rulings`). Indexes on name, front_name, ci_key, cmc,
+      commander legality. Non-gameplay layouts (art series/tokens/emblems) flagged + deprioritized.
+- [x] `models/card.py` (Pydantic) — Card/CardFace/Ruling with DFC handling driven off `layout`.
+- [x] `data/scryfall_client.py` (httpx async, custom UA/Accept, ~100 ms throttle, 429 backoff):
+      `/cards/named` (fuzzy/exact), `/cards/autocomplete`, `/cards/search`, `POST /cards/collection`
+      (auto-chunked ≤75).
+- [x] Rulings lookup from bulk file, joined on `oracle_id`.
+- [x] Tests (no network): ingest fixture, name/front-face resolution, DFC parsing, rulings join,
+      client header/chunk/429 behavior via MockTransport. CLI `mtg data refresh` / `mtg card`.
+- **Ingested 38,178 cards + 76,805 rulings locally (~9 s).** Name resolution verified on real data.
 
 ### Phase 2 — Ingest: decks & inventory  `[ ]`
 - [ ] Tolerant decklist parser: `[SB:] N[x] Name [(SET) Number]`, header/blank-line/`//` handling →
@@ -179,4 +183,9 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 - **2026-06-17** — **Phase 0 complete.** Targeted Python 3.11 (installed interpreter; 3.12 not
   needed). venv + `pip install -e ".[dev]"`; `ruff`/`mypy`/`pytest` green. FastAPI `/health` route
   with CORS; Vite + React-TS frontend scaffolded and shows live backend status (verified end-to-end).
-  Next: **Phase 1 — card data layer** (Scryfall bulk ingest → SQLite, Card model, live client).
+- **2026-06-17** — **Phase 1 complete.** Card data layer built: bulk downloader (manifest-tracked),
+  ijson streaming ingest into SQLite (cards/printings/rulings), Pydantic Card model with DFC
+  handling, async Scryfall client (throttle/429/batch), CLI (`mtg data refresh`, `mtg card`).
+  Added `ijson` dep, dropped `sqlite-utils` (stdlib sqlite3). 17 tests, ruff/mypy clean. Ingested
+  38,178 cards + 76,805 rulings. Caught + fixed name-resolution bug (art-series cards shadowing real
+  cards) — important for Phase 2 decklist parsing. Next: **Phase 2 — deck & inventory ingest.**

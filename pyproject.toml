@@ -10,7 +10,7 @@ dependencies = [
     "pydantic>=2.9",        # domain models + API schemas
     "numpy>=2.1",           # Monte-Carlo simulation
     "scipy>=1.14",          # hypergeometric probability
-    "sqlite-utils>=3.37",   # local card DB ingest helpers (stdlib sqlite3 underneath)
+    "ijson>=3.3",           # streaming parse of large Scryfall bulk JSON (memory-bounded)
 ]
 
 [project.optional-dependencies]
@@ -38,3 +38,10 @@ target-version = "py312"
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
 asyncio_mode = "auto"
+
+[tool.mypy]
+mypy_path = "backend"
+
+[[tool.mypy.overrides]]
+module = ["ijson.*"]
+ignore_missing_imports = true

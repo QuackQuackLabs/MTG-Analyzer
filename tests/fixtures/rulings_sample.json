@@ -1,0 +1,16 @@
+[
+  {
+    "object": "ruling",
+    "oracle_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "source": "wotc",
+    "published_at": "2004-10-04",
+    "comment": "Sol Ring's ability adds two colorless mana, not two mana of any one color."
+  },
+  {
+    "object": "ruling",
+    "oracle_id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    "source": "wotc",
+    "published_at": "2011-09-22",
+    "comment": "Delver of Secrets's ability checks the top card as it resolves."
+  }
+]
