@@ -11,6 +11,7 @@ venv/
 # Local data (large, regenerable — never commit)
 data/scryfall/*.json
 data/scryfall/*.json.gz
+data/rules/*.txt
 data/*.db
 data/*.sqlite
 data/cache/

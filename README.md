@@ -37,6 +37,17 @@ npm install
 npm run dev       # serves http://localhost:5173, calls the backend's /health
 ```
 
+**Load local data (one-time, ~200 MB cards + ~1 MB rules):**
+
+```bash
+mtg data refresh                       # Scryfall cards + rulings → SQLite
+mtg rules refresh                      # Comprehensive Rules (auto-discovers current version)
+mtg card "Atraxa, Praetors' Voice"     # spot-check a card + its rulings
+mtg rules get 702.19                   # a rule and its subrules (Trample)
+mtg rules search "21 combat damage from a single commander"
+mtg rules glossary "Color Identity"
+```
+
 ## For contributors / agents
 
 Read **[CLAUDE.md](CLAUDE.md)** and **[project-plan.md](project-plan.md)** first. Domain knowledge

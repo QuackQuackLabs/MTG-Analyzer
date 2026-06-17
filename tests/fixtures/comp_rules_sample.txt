@@ -1,0 +1,48 @@
+﻿Magic: The Gathering Comprehensive Rules
+
+These rules are effective as of February 27, 2026.
+
+Introduction
+
+This document is the ultimate authority for Magic gameplay.
+
+Contents
+
+1. Game Concepts
+100. General
+7. Additional Rules
+702. Keyword Abilities
+Glossary
+Credits
+
+1. Game Concepts
+
+100. General
+
+100.1. These Magic rules apply to any Magic game with two or more players, including two-player games and multiplayer games.
+
+100.1a A two-player game is a game that begins with only two players.
+
+100.2. To play, each player needs their own deck of traditional Magic cards.
+
+100.10. This is a sibling rule, not a subrule of 100.1, and must not be returned when expanding 100.1.
+
+7. Additional Rules
+
+702. Keyword Abilities
+
+702.19. Trample
+
+702.19a Trample is a static ability that modifies the rules for combat damage assignment.
+
+Glossary
+
+Trample
+A keyword ability that modifies how combat damage is assigned. See rule 702.19, "Trample."
+
+Commander
+A legendary creature designated as the deck's commander. See rule 903, "Commander."
+
+Credits
+
+Magic: The Gathering was designed by Richard Garfield.

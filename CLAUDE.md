@@ -46,7 +46,7 @@ backend/mtg_analyzer/        Pure-Python engine (the value lives here; UI is swa
   data/         Scryfall bulk ingest, refresh, local SQLite card DB
   models/       Pydantic domain models: Card, Deck, Inventory, Ruling
   ingest/       Decklist + inventory file parsers (Arena/Moxfield/Archidekt txt, ManaBox CSV)
-  rules/        Commander legality, comprehensive-rules store, card rulings lookup
+  rules/        Comprehensive Rules corpus (download/parse + SQLite/FTS5 store), legality, rulings
   analysis/     Category/curve analysis, deck scoring
   combos/        Commander Spellbook integration (combo / "almost there" detection)
   simulation/   Hypergeometric (scipy) + Monte-Carlo (numpy) goldfish simulator

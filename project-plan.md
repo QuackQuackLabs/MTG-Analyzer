@@ -110,12 +110,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update inline as work com
 - [ ] API routes + frontend views: import deck → validation report → category/curve charts →
       ranked recommendations → shopping list. Card images from Scryfall (cache locally).
 
-### Phase 4 — Combo & interaction detection  `[ ]`
+### Phase 4 — Combo & interaction detection  `[~]`
+- [x] **Comprehensive Rules corpus (pulled forward).** `rules/comprehensive.py` auto-discovers the
+      current rules `.txt` from magic.wizards.com, downloads + parses it (sections / categories /
+      rules / subrules + glossary). `rules/store.py` stores it in `app.db` with FTS5 search:
+      exact rule lookup, subrule expansion (GLOB letter-class, not LIKE), ranked full-text search
+      over rules + glossary. CLI `mtg rules refresh|get|search|glossary`. Tests in `test_rules.py`.
+      *Ingested 3,294 rules + 730 glossary terms (effective 2026-04-17).*
 - [ ] Commander Spellbook client: `/find-my-combos` (present + "almost there" by one card) and a
       cached `/variants/` mirror (page `?limit=1000`); consider self-hosting the MIT backend later.
 - [ ] Surface combos in a deck, missing pieces, and color-identity-legal combos to *add*.
-- [ ] Interaction/ruling Q&A: given a card or scenario, pull Scryfall rulings + relevant
-      comprehensive-rules sections.
+- [ ] Interaction/ruling Q&A: given a card or scenario, combine Scryfall rulings (Phase 1) +
+      relevant comprehensive-rules sections (now available) + combo data.
 
 ### Phase 5 — Game simulation & analytics  `[ ]`
 - [ ] Hypergeometric module (scipy): P(≥k lands in opening 7), P(see card/combo by turn N),
@@ -188,4 +194,11 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   handling, async Scryfall client (throttle/429/batch), CLI (`mtg data refresh`, `mtg card`).
   Added `ijson` dep, dropped `sqlite-utils` (stdlib sqlite3). 17 tests, ruff/mypy clean. Ingested
   38,178 cards + 76,805 rulings. Caught + fixed name-resolution bug (art-series cards shadowing real
-  cards) — important for Phase 2 decklist parsing. Next: **Phase 2 — deck & inventory ingest.**
+  cards) — important for Phase 2 decklist parsing.
+- **2026-06-17** — **Comprehensive Rules corpus added (Phase 4 item, pulled forward at user
+  request)** so card/deck evaluation has the full, queryable game rules. Auto-discovers + downloads
+  the official rules `.txt`, parses into rules/subrules/glossary, stores in SQLite + FTS5. Ingested
+  3,294 rules + 730 glossary terms (effective 2026-04-17). Fixed two bugs found by spot-checking
+  real data: subrule expansion (702.19 wrongly matched 702.190 via LIKE → switched to GLOB
+  `[a-z]`), and search (term-AND too strict → bm25-ranked OR). 27 tests, ruff/mypy clean.
+  Next: **Phase 2 — deck & inventory ingest.**
