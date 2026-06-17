@@ -11,6 +11,8 @@ is captured for reference only. See the mtg-data-ecosystem skill for format deta
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 
 from mtg_analyzer.models.deck import DeckEntry, ParsedDeck
@@ -38,7 +40,18 @@ def parse_decklist(text: str) -> ParsedDeck:
 
     for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         line = raw.strip()
-        if not line or line.startswith(("//", "#")):
+        if not line:
+            # A blank line ends a (short) commander block — ManaBox writes
+            # "// COMMANDER", the commander, a blank line, then the unmarked mainboard.
+            if section == "commander":
+                section = "main"
+            continue
+
+        # Comment OR a comment-style section marker (ManaBox uses "// COMMANDER" etc.).
+        if line.startswith(("//", "#")):
+            marker = line.lstrip("/#").strip().rstrip(":").lower()
+            if marker in _HEADER_TO_SECTION:
+                section = _HEADER_TO_SECTION[marker]
             continue
 
         header = line.rstrip(":").lower()
@@ -93,3 +106,59 @@ def parse_decklist(text: str) -> ParsedDeck:
         else "plain"
     )
     return ParsedDeck(entries=entries, source_format=source)
+
+
+# --- Archidekt CSV deck export --------------------------------------------
+# Headerless, positional. Column layout observed from real exports:
+#   0 qty · 1 name · 2 set name · 3 set code · 4 category · 5 label · 6 deck-section
+#   · 7 finish · 8 collector# · 9 modifier · 10 color · 11 mv · 12 rarity
+#   · 13 Scryfall id · 14 type · 15 price · 16 ownership · 17 oracle text
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-", re.ASCII)
+_ARCHIDEKT_MIN_COLS = 14
+_COL = {"qty": 0, "name": 1, "set": 3, "category": 4, "section": 6, "collector": 8, "uuid": 13}
+
+
+def looks_like_archidekt_csv(text: str) -> bool:
+    """True if the text is a headerless Archidekt deck CSV (qty,name,…,uuid,…)."""
+    for line in text.lstrip("﻿").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = next(csv.reader([line]))
+        except (csv.Error, StopIteration):
+            return False
+        return (
+            len(row) >= _ARCHIDEKT_MIN_COLS
+            and row[_COL["qty"]].strip().isdigit()
+            and bool(_UUID_RE.match(row[_COL["uuid"]].strip()))
+        )
+    return False
+
+
+def parse_archidekt_csv(text: str) -> ParsedDeck:
+    entries: list[DeckEntry] = []
+    for row in csv.reader(io.StringIO(text.lstrip("﻿"))):
+        if len(row) < _ARCHIDEKT_MIN_COLS or not row[_COL["qty"]].strip().isdigit():
+            continue
+        category = row[_COL["category"]].strip() or None
+        sec_hint = row[_COL["section"]].strip().lower() if len(row) > _COL["section"] else ""
+        if category and category.lower() == "commander":
+            section = "commander"
+        elif sec_hint in {"maybeboard", "sideboard"}:
+            section = sec_hint
+        else:
+            section = "main"
+        entries.append(DeckEntry(
+            quantity=int(row[_COL["qty"]]),
+            name=row[_COL["name"]].strip(),
+            set_code=row[_COL["set"]].strip() or None,
+            collector_number=row[_COL["collector"]].strip() or None,
+            section=section,
+            category=category,
+        ))
+    return ParsedDeck(entries=entries, source_format="archidekt-csv")
+
+
+def parse_deck(text: str) -> ParsedDeck:
+    """Parse a decklist in any supported format (auto-detects Archidekt CSV vs text)."""
+    return parse_archidekt_csv(text) if looks_like_archidekt_csv(text) else parse_decklist(text)

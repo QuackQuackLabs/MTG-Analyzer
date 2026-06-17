@@ -73,18 +73,34 @@ Combo data is fan content (attribute, don't resell).
 ## Deck & inventory file formats (ingest)
 
 **Decklist lines** — one tolerant parser handles `.txt`/Arena/Moxfield/Archidekt/MWS:
-`[SB:] N[x] Name [(SET) Number]` + section headers (`Deck`/`Sideboard`/`Commander`/`Companion`) or
-blank-line separators + `//` comments. Arena/Moxfield/Archidekt share `1 Sol Ring (LTC) 284`; the
-`(SET) #` suffix disambiguates the printing (name-only is ambiguous — Sol Ring has dozens).
+`[SB:] N[x] Name [(SET) Number] [*F*] [[Category]]` + section headers (`Deck`/`Sideboard`/
+`Commander`/`Companion`/`Maybeboard`) or blank-line separators + `//` comments. Constrain the
+trailing `(SET) #` so a card name with parentheses (e.g. `Erase (Not the Urza's Legacy One)`) isn't
+misparsed: the set code is short and space-free.
 
-**Inventory CSVs** (parse by **header name**, not column position):
-- **ManaBox** (target first — has set code + collector # *and* `Scryfall ID`): columns include
-  `Name, Set code, Collector number, Foil, Quantity, Scryfall ID, Condition, Language, ...`.
+**Verified from real exports (2026-06):**
+- **ManaBox deck `.txt`** marks sections with **comment-markers** — `// COMMANDER` then the
+  commander, a **blank line**, then the unmarked mainboard. Treat `// <SECTION>` as a section header
+  (not a skipped comment); let a blank line end a commander block.
+- **Archidekt deck CSV** is **headerless + positional** (18 cols): `qty, name, set name, set code,
+  category, label, deck-section, finish, collector#, modifier, color, mv, rarity, scryfall id, type,
+  price, ownership, oracle text`. The commander = the row with **category == "Commander"**; other
+  categories are functional tags (Land/Ramp/Removal — handy for Phase 3 analysis). Detect it (col 0
+  is an int, col 13 a UUID). **A `.csv` may be a deck OR a collection — route by content, not
+  extension.**
+
+**Inventory/collection CSVs** (parse by **header name**, not column position):
+- **ManaBox** collection: `Name, Set code, Collector number, Foil, Quantity, Scryfall ID,
+  Condition, Language, ...` (Foil values `normal`/`foil`/`etched`).
 - **Deckbox**: `Count, Name, Edition, Card Number, Condition, Foil, ...`.
 - **Moxfield collection**: `Count, Name, Edition, Condition, Foil, Collector Number, ...`.
 
-**Canonical resolution priority:** `Scryfall ID → (set code + collector #) → (name + set) →
-name-only (flag ambiguous)`. Report unresolved lines.
+**Resolution priority: NAME first** → oracle_id (a card name maps uniquely to a gameplay identity;
+that's all resolution needs — store printing details verbatim). Then `Scryfall ID` →
+`(set code + collector #)` as fallbacks. *Do NOT try set+collector before name:* the local bulk DB
+holds one representative printing per card, so a `(set, collector)` from an export can match a
+*different* card's representative printing and mis-resolve (this split Sol Ring across two oracle_ids
+in testing). Report unresolved lines; don't drop them.
 
 ## Recommendation engine — four-stage funnel
 

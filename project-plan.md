@@ -87,8 +87,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update inline as work com
 
 ### Phase 2 — Ingest: decks & inventory  `[x]`
 - [x] **Decklist parser** (`ingest/decklist.py`): tolerant `[SB:] N[x] Name [(SET) [#]] [*F*]
-      [[Category]]` + section headers + `//`/`#` comments. Covers Archidekt (category tags, commander
-      via `[Commander]`), Moxfield/Arena/MTGO. Card-name parens preserved (set group is space-free).
+      [[Category]]` + section headers + `//`/`#` comments. Covers Archidekt-text, Moxfield/Arena/MTGO,
+      and **ManaBox `.txt`** (`// COMMANDER` comment-markers + blank-line section reset). Card-name
+      parens preserved (set group is space-free). `parse_deck` auto-detects **Archidekt CSV deck
+      exports** (headerless, positional; commander via category, set/collector/section captured) vs
+      text. *Validated on real exports: Sauron ManaBox txt → [BRU] 100 cards; Leonardo Archidekt csv
+      → [BGRUW] 100 cards, 0 unresolved.*
 - [x] **Inventory CSV parser** (`ingest/inventory.py`): ManaBox-first, header-driven (matches by
       normalized header, not position) → also reads Moxfield/Deckbox/Archidekt collection CSVs.
 - [x] **Resolution** (`ingest/resolve.py`): **name-first** → oracle_id (reliable, unique), with

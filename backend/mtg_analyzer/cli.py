@@ -19,7 +19,7 @@ from mtg_analyzer.combos.store import ComboStore
 from mtg_analyzer.data.bulk import BulkDataManager
 from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.data.inventory_store import InventoryStore
-from mtg_analyzer.ingest.decklist import parse_decklist
+from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 from mtg_analyzer.models.combo import Combo
@@ -206,7 +206,7 @@ def _cmd_combos_find(args: argparse.Namespace) -> int:
 
 
 def _cmd_deck_show(args: argparse.Namespace) -> int:
-    parsed = parse_decklist(Path(args.file).read_text(encoding="utf-8"))
+    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
     db = CardDatabase()
     try:
         deck = resolve_deck(db, parsed)

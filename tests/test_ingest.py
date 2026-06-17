@@ -5,7 +5,11 @@ import pytest
 
 from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.data.inventory_store import InventoryStore
-from mtg_analyzer.ingest.decklist import parse_decklist
+from mtg_analyzer.ingest.decklist import (
+    looks_like_archidekt_csv,
+    parse_deck,
+    parse_decklist,
+)
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 
@@ -48,6 +52,32 @@ def test_parse_arena_sections_and_foil() -> None:
     delver = next(e for e in deck.entries if e.name == "Delver of Secrets")
     assert delver.set_code == "ISD" and delver.collector_number == "51"  # *F* stripped
     assert any(e.section == "sideboard" for e in deck.entries)  # SB: line
+
+
+def test_parse_manabox_comment_section_markers() -> None:
+    # ManaBox marks the commander with "// COMMANDER" then a blank line before the deck.
+    deck = parse_decklist((FIXTURES / "deck_manabox.txt").read_text())
+    sections = {e.name: e.section for e in deck.entries}
+    assert sections["Llanowar Elves"] == "commander"  # from "// COMMANDER"
+    assert sections["Sol Ring"] == "main"  # blank line ended the commander block
+    assert sections["Delver of Secrets"] == "main"
+
+
+def test_parse_archidekt_csv_deck() -> None:
+    text = (FIXTURES / "deck_archidekt.csv").read_text()
+    assert looks_like_archidekt_csv(text)
+    deck = parse_deck(text)  # auto-detects CSV vs text
+    assert deck.source_format == "archidekt-csv"
+    by_name = {e.name: e for e in deck.entries}
+    assert by_name["Llanowar Elves"].section == "commander"  # category == Commander
+    assert by_name["Sol Ring"].section == "main"
+    assert by_name["Sol Ring"].set_code == "ltc" and by_name["Sol Ring"].collector_number == "284"
+    assert by_name["Delver of Secrets"].section == "maybeboard"  # col-6 section hint
+
+
+def test_parse_deck_routes_text_format() -> None:
+    deck = parse_deck((FIXTURES / "deck_manabox.txt").read_text())
+    assert deck.source_format != "archidekt-csv"  # routed to the text parser
 
 
 # --- deck resolution -------------------------------------------------------
