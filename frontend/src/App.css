@@ -1,0 +1,45 @@
+.app {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+h1 {
+  margin-bottom: 0.25rem;
+}
+
+.tagline {
+  color: #888;
+  margin-top: 0;
+}
+
+.status-card {
+  margin-top: 2rem;
+  padding: 1rem 1.5rem;
+  border: 1px solid #333;
+  border-radius: 8px;
+}
+
+.status-card h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+
+.ok {
+  color: #2ecc71;
+}
+
+.error {
+  color: #e74c3c;
+}
+
+code {
+  background: rgba(128, 128, 128, 0.2);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}

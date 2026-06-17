@@ -25,7 +25,7 @@ future item (§7), and the architecture keeps it reachable.
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Language / engine | **Python 3.12+** | Best fit for the data/analytics/simulation core; scipy/numpy; the data ecosystem (pyedhrec etc.) is Python. |
+| Language / engine | **Python 3.11+** | Best fit for the data/analytics/simulation core; scipy/numpy; the data ecosystem (pyedhrec etc.) is Python. |
 | Interface | **Local web app** — FastAPI backend + **React/Vite/TS** SPA frontend | User-chosen. Natural for uploads, card images, charts, deck diffs; cleanest path to future publishing. |
 | First milestone | **Deck analysis + recommendations** (no simulator required) | User-chosen. Highest value per effort; works day one. |
 | Card data | **Scryfall bulk data** ingested into local **SQLite**, keyed on `oracle_id`; live API only for autocomplete/fuzzy/ad-hoc search | Scryfall is the sanctioned, documented source; bulk is the right tool for inventory-scale work. |
@@ -62,13 +62,13 @@ files: `Scryfall ID → (set code + collector #) → (name + set) → name-only 
 
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update inline as work completes.
 
-### Phase 0 — Foundation  `[~]`
+### Phase 0 — Foundation  `[x]`
 - [x] Research (Scryfall API, Commander rules + simulation feasibility, data ecosystem).
 - [x] Repo init, directory skeleton, `pyproject.toml`, `.gitignore`, `CLAUDE.md`, this plan.
 - [x] Domain skills authored (`scryfall-api`, `commander-format`, `mtg-data-ecosystem`).
-- [ ] Python venv + `pip install -e ".[dev]"`; confirm `pytest`/`ruff`/`mypy` run clean on empty repo.
-- [ ] FastAPI "hello" app + health route; Vite/React app scaffold that calls it. Wire CORS for local dev.
-- [ ] Initial git commit (only when the user asks).
+- [x] Python venv (3.11) + `pip install -e ".[dev]"`; `pytest`/`ruff`/`mypy` run clean.
+- [x] FastAPI app + `/health` route (CORS for Vite origin); Vite/React-TS app shows backend status.
+- [x] Initial git commit.
 
 ### Phase 1 — Card data layer  `[ ]`
 - [ ] `data/`: `/bulk-data` poller → download **Oracle Cards** + **Rulings** (gzip), store metadata,
@@ -175,5 +175,8 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 ## 8. Status log
 
 - **2026-06-17** — Project kickoff. Research completed (3 briefs). Decisions in §2 confirmed with
-  user. Foundation scaffolding + skills + docs created. Next: Phase 0 env setup + FastAPI/Vite
-  hello-world, then Phase 1 card data layer.
+  user. Foundation scaffolding + skills + docs created.
+- **2026-06-17** — **Phase 0 complete.** Targeted Python 3.11 (installed interpreter; 3.12 not
+  needed). venv + `pip install -e ".[dev]"`; `ruff`/`mypy`/`pytest` green. FastAPI `/health` route
+  with CORS; Vite + React-TS frontend scaffolded and shows live backend status (verified end-to-end).
+  Next: **Phase 1 — card data layer** (Scryfall bulk ingest → SQLite, Card model, live client).

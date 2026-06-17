@@ -11,20 +11,30 @@ Runs entirely on your machine. No account, no hosting required.
 
 ## Stack
 
-- **Backend / engine:** Python 3.12+, FastAPI, SQLite, numpy/scipy, httpx, pydantic
+- **Backend / engine:** Python 3.11+, FastAPI, SQLite, numpy/scipy, httpx, pydantic
 - **Frontend:** React + Vite + TypeScript (later phase)
 - **Data:** [Scryfall](https://scryfall.com/docs/api) (cards/rulings, bulk), Commander Spellbook
   (combos), EDHREC (recommendation stats)
 
 ## Quick start (dev)
 
+**Backend / engine:**
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 pytest            # run tests
 ruff check        # lint
-# API (once it exists):
-uvicorn mtg_analyzer.api.app:app --reload
+mypy backend      # type-check
+uvicorn mtg_analyzer.api.app:app --reload   # serves http://localhost:8000 (/health)
+```
+
+**Frontend:**
+
+```bash
+cd frontend
+npm install
+npm run dev       # serves http://localhost:5173, calls the backend's /health
 ```
 
 ## For contributors / agents

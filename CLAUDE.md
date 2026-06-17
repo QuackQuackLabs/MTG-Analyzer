@@ -58,7 +58,7 @@ tests/                       pytest
 .claude/skills/              Project domain skills (see Golden rule 3)
 ```
 
-**Stack:** Python 3.12+, FastAPI + uvicorn, SQLite, numpy/scipy, httpx, pydantic. Frontend is
+**Stack:** Python 3.11+, FastAPI + uvicorn, SQLite, numpy/scipy, httpx, pydantic. Frontend is
 React/Vite/TS. Keep the engine importable and testable independent of FastAPI — the API is a thin
 adapter, so the interface stays swappable and publishable later.
 
