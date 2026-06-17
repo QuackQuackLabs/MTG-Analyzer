@@ -117,11 +117,22 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update inline as work com
       exact rule lookup, subrule expansion (GLOB letter-class, not LIKE), ranked full-text search
       over rules + glossary. CLI `mtg rules refresh|get|search|glossary`. Tests in `test_rules.py`.
       *Ingested 3,294 rules + 730 glossary terms (effective 2026-04-17).*
-- [ ] Commander Spellbook client: `/find-my-combos` (present + "almost there" by one card) and a
-      cached `/variants/` mirror (page `?limit=1000`); consider self-hosting the MIT backend later.
-- [ ] Surface combos in a deck, missing pieces, and color-identity-legal combos to *add*.
-- [ ] Interaction/ruling Q&A: given a card or scenario, combine Scryfall rulings (Phase 1) +
-      relevant comprehensive-rules sections (now available) + combo data.
+- [x] **Commander Spellbook client** (`combos/client.py`): live `/find-my-combos` (authoritative —
+      resolves `requires` templates server-side; returns included + almost-there buckets) and a
+      per-card `/variants/?q=card:"…"` search. Conservative ~3 req/s pace + exponential 429 backoff.
+      **On-demand, not a full mirror:** find-my-combos covers all ~90.5k commander-legal combos
+      server-side (always current), so we query live + cache rather than scraping 900+ pages — which
+      tripped the API's rate limit and is poor citizenship (their own guidance: self-host the MIT
+      backend for true bulk; deferred to §7).
+- [x] **Local combo cache** (`combos/store.py`): caches fetched combos in `app.db` (combos +
+      combo_cards on `oracle_id`); `add` (cache-through upsert) + `combos_using` + offline
+      `find_in_deck` (uses-based; template combos confirmed via the live endpoint). CLI
+      `mtg combos card|find`. Tests in `test_combos.py` (incl. a regression for a pagination
+      infinite-loop bug where an empty `params={}` stripped the `next` URL's query).
+- [ ] Surface combos/missing-pieces in the deck-analysis UI; suggest color-identity-legal combos to *add*
+      (the live "almost included" bucket already provides one-card-away suggestions).
+- [ ] Interaction/ruling Q&A: combine Scryfall rulings (Phase 1) + comprehensive-rules sections +
+      combo data into a single "what happens / what governs this?" lookup.
 
 ### Phase 5 — Game simulation & analytics  `[ ]`
 - [ ] Hypergeometric module (scipy): P(≥k lands in opening 7), P(see card/combo by turn N),
@@ -179,6 +190,9 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   for any non-local/commercial use.
 - **Full rules-enforced simulation** — integrate **XMage** (MIT, Java) as a play engine if true
   game AI is ever needed, rather than building a rules engine.
+- **Self-hosted Commander Spellbook backend** (MIT, Docker) — if a complete *offline* combo mirror
+  is ever wanted, run their backend locally instead of scraping the public API's 900+ variant pages
+  (which trips rate limits). Until then, live find-my-combos + per-card search + cache suffices.
 - **Price tracking over time**, alternate formats (Brawl, Oathbreaker), playtest/draft modes,
   pod-aware multiplayer simulation.
 

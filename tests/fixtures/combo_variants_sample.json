@@ -1,0 +1,38 @@
+[
+  {
+    "id": "comboA",
+    "identity": "U",
+    "popularity": 100,
+    "status": "OK",
+    "manaNeeded": "{U}",
+    "easyPrerequisites": "Both permanents on the battlefield.",
+    "notablePrerequisites": "",
+    "legalities": {"commander": true},
+    "prices": {"tcgplayer": "5.00"},
+    "uses": [
+      {"card": {"oracleId": "oid-x", "name": "Card X"}, "mustBeCommander": false},
+      {"card": {"oracleId": "oid-y", "name": "Card Y"}, "mustBeCommander": false}
+    ],
+    "requires": [],
+    "produces": [{"feature": {"name": "Infinite mana"}}]
+  },
+  {
+    "id": "comboB",
+    "identity": "UB",
+    "popularity": 50,
+    "status": "OK",
+    "manaNeeded": "",
+    "easyPrerequisites": "",
+    "notablePrerequisites": "You must control a creature.",
+    "legalities": {"commander": true},
+    "prices": {"tcgplayer": "2.00"},
+    "uses": [
+      {"card": {"oracleId": "oid-x", "name": "Card X"}, "mustBeCommander": false},
+      {"card": {"oracleId": "oid-z", "name": "Card Z"}, "mustBeCommander": false}
+    ],
+    "requires": [
+      {"template": {"name": "Permanent that taps for mana", "scryfallQuery": "o:\"add\""}}
+    ],
+    "produces": [{"feature": {"name": "Win the game"}}]
+  }
+]

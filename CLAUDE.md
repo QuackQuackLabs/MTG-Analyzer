@@ -48,7 +48,7 @@ backend/mtg_analyzer/        Pure-Python engine (the value lives here; UI is swa
   ingest/       Decklist + inventory file parsers (Arena/Moxfield/Archidekt txt, ManaBox CSV)
   rules/        Comprehensive Rules corpus (download/parse + SQLite/FTS5 store), legality, rulings
   analysis/     Category/curve analysis, deck scoring
-  combos/        Commander Spellbook integration (combo / "almost there" detection)
+  combos/       Commander Spellbook: live find-my-combos client + local variant cache/matcher
   simulation/   Hypergeometric (scipy) + Monte-Carlo (numpy) goldfish simulator
   recommend/    Recommender + budget shopping-list / deck-construction engine
   api/          FastAPI app — thin layer over the engine

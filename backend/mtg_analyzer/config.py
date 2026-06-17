@@ -19,6 +19,7 @@ SCRYFALL_DIR = DATA_DIR / "scryfall"
 DB_PATH = DATA_DIR / "app.db"
 
 SCRYFALL_API_BASE = "https://api.scryfall.com"
+COMMANDER_SPELLBOOK_BASE = "https://backend.commanderspellbook.com"
 
 # Required by Scryfall: a descriptive User-Agent and an explicit Accept header.
 # (Requests without them are rejected — see the scryfall-api skill.)

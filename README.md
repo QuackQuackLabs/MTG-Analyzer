@@ -46,6 +46,8 @@ mtg card "Atraxa, Praetors' Voice"     # spot-check a card + its rulings
 mtg rules get 702.19                   # a rule and its subrules (Trample)
 mtg rules search "21 combat damage from a single commander"
 mtg rules glossary "Color Identity"
+mtg combos card "Thassa's Oracle"      # combos that use a card (live query, cached)
+mtg combos find mydeck.txt             # combos present + one-card-away (live, authoritative)
 ```
 
 ## For contributors / agents

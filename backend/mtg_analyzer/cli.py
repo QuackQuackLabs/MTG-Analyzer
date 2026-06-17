@@ -8,13 +8,24 @@ quick lookups without a running server.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import re
 import sys
+from pathlib import Path
 
 from mtg_analyzer import config
+from mtg_analyzer.combos.client import CommanderSpellbookClient
+from mtg_analyzer.combos.store import ComboStore
 from mtg_analyzer.data.bulk import BulkDataManager
 from mtg_analyzer.data.db import CardDatabase
+from mtg_analyzer.models.combo import Combo
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
 from mtg_analyzer.rules.store import RulesStore
+
+# Minimal card-name extraction for the combos CLI (the full decklist parser is Phase 2):
+# strips a leading quantity and a trailing "(SET) 123" printing suffix.
+_DECK_LINE_RE = re.compile(r"^\s*(?:\d+x?\s+)?(.+?)(?:\s+\([0-9A-Za-z]+\)\s+\S+)?\s*$")
+_SECTION_HEADERS = {"deck", "commander", "sideboard", "companion", "maybeboard"}
 
 
 def _cmd_data_refresh(args: argparse.Namespace) -> int:
@@ -129,6 +140,67 @@ def _cmd_rules_glossary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_combos_card(args: argparse.Namespace) -> int:
+    db = CardDatabase()
+    store = ComboStore()
+    try:
+        card = db.get_by_name(args.name)
+        name = card.name if card else args.name
+
+        async def fetch() -> list[Combo]:
+            async with CommanderSpellbookClient() as client:
+                return await client.combos_for_card(name, max_results=args.limit)
+
+        combos = asyncio.run(fetch())  # live, single filtered query
+        store.add(combos)  # cache for offline reuse
+        if not combos:
+            print(f"No combos found that use {name}.")
+            return 0
+        print(f"{len(combos)} combo(s) using {name}:\n")
+        for c in combos:
+            others = [u.name for u in c.uses if u.name != name]
+            templates = [t.name for t in c.requires]
+            parts = others + [f"<{t}>" for t in templates]
+            print(f"  [{c.id}] {' + '.join(c.produces) or 'combo'}")
+            print(f"     with: {', '.join(parts) or '(none)'}")
+    finally:
+        store.close()
+        db.close()
+    return 0
+
+
+def _extract_card_names(text: str) -> list[str]:
+    names: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("//", "#")) or line.rstrip(":").lower() in _SECTION_HEADERS:
+            continue
+        if m := _DECK_LINE_RE.match(line):
+            names.append(m.group(1).strip())
+    return names
+
+
+def _cmd_combos_find(args: argparse.Namespace) -> int:
+    names = _extract_card_names(Path(args.file).read_text(encoding="utf-8"))
+    if not names:
+        print("No card names found in file.", file=sys.stderr)
+        return 1
+
+    async def run() -> None:
+        async with CommanderSpellbookClient() as client:
+            result = await client.find_my_combos(main=names)
+        print(f"Deck identity: {result.identity or 'C'}  ({len(names)} cards)")
+        print(f"\nComplete combos in deck: {len(result.included)}")
+        for c in result.included[:args.limit]:
+            print(f"  [{c.id}] {' + '.join(c.produces)}  — {', '.join(u.name for u in c.uses)}")
+        print(f"\nOne card away: {len(result.almost_included)}")
+        for c in result.almost_included[:args.limit]:
+            print(f"  [{c.id}] {' + '.join(c.produces)}")
+
+    asyncio.run(run())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mtg", description="MTG Analyzer CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -162,6 +234,18 @@ def main(argv: list[str] | None = None) -> int:
     r_gloss.add_argument("term")
     r_gloss.add_argument("--limit", type=int, default=5)
     r_gloss.set_defaults(func=_cmd_rules_glossary)
+
+    combos = sub.add_parser("combos", help="Commander Spellbook combos").add_subparsers(
+        dest="combos_command", required=True
+    )
+    c_card = combos.add_parser("card", help="combos that use a card (live query, cached)")
+    c_card.add_argument("name")
+    c_card.add_argument("--limit", type=int, default=25)
+    c_card.set_defaults(func=_cmd_combos_card)
+    c_find = combos.add_parser("find", help="find combos in a decklist file (live, authoritative)")
+    c_find.add_argument("file")
+    c_find.add_argument("--limit", type=int, default=20)
+    c_find.set_defaults(func=_cmd_combos_find)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

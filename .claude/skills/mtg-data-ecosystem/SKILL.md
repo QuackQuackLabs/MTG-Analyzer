@@ -44,13 +44,22 @@ prerequisites · `legalities` · `prices` · `popularity`.
 | `/variants/` | full combo DB (DRF paginated, `limit`/`offset`, ≤1000/page) |
 | `/card-list-from-text`, `/estimate-bracket` | decklist parsing + bracket estimate |
 
-`/find-my-combos` response buckets: `included` (fully present), `almost_included` (missing exactly
-one piece), `almost_included_by_adding_colors`, `included_by_changing_commanders`. Diff `uses`/
-`requires` vs the deck to name the missing piece; label via `produces`. **Bulk:** the single-file
-dump was removed (~2024) — page `/variants/?limit=1000&offset=N` into a local cache, or **self-host
-the MIT backend** (Docker) for the most robust local option. Backend repo:
-github.com/SpaceCowMedia/commander-spellbook-backend. Combo data is fan content (attribute, don't
-resell).
+`/find-my-combos` response buckets (camelCase): `included` (fully present), `almostIncluded`
+(missing one), `almostIncludedByAddingColors`, `includedByChangingCommanders`, plus `identity`.
+Request body is a `DeckRequest`: `{"main":[{"card":"Name","quantity":1}], "commanders":[…]}` — cards
+are **objects**, not bare strings. Diff `uses`/`requires` vs the deck to name the missing piece;
+label via `produces`. Each `uses[].card` carries `oracleId` (join to Scryfall). `requires` are
+generic templates with a `scryfallQuery`; find-my-combos resolves them server-side.
+
+**Verified live (2026-06): ~92k variants total / ~90.5k commander-legal.** `/variants/` caps `limit`
+at **100** (not 1000) and disables `count` unless `?count=true`; `q=legal:commander` and
+`q=card:"Name"` filters work; follow `next` for pagination (pass `params=None` when following it —
+an empty `params={}` strips the query and infinite-loops).
+**Do NOT mirror the whole DB by paging** (~900 requests) — it trips an aggressive rate limit / IP
+cooldown and is poor citizenship. Prefer **on-demand + cache**: live find-my-combos per deck
+(authoritative, always current, covers all 90k server-side) and `q=card:"…"` per card. For a true
+offline mirror, **self-host the MIT backend** (Docker, github.com/SpaceCowMedia/commander-spellbook-backend).
+Combo data is fan content (attribute, don't resell).
 
 ## Other decklist sources
 
