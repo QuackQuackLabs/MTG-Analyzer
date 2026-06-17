@@ -1,0 +1,40 @@
+[project]
+name = "mtg-analyzer"
+version = "0.1.0"
+description = "Local Magic: The Gathering Commander deck analyzer, simulator, and recommender"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",          # Scryfall / external API calls (async, sets custom User-Agent)
+    "pydantic>=2.9",        # domain models + API schemas
+    "numpy>=2.1",           # Monte-Carlo simulation
+    "scipy>=1.14",          # hypergeometric probability
+    "sqlite-utils>=3.37",   # local card DB ingest helpers (stdlib sqlite3 underneath)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[project.scripts]
+mtg = "mtg_analyzer.cli:main"   # thin CLI over the engine (optional convenience)
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/mtg_analyzer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+asyncio_mode = "auto"

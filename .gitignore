@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local data (large, regenerable — never commit)
+data/scryfall/*.json
+data/scryfall/*.json.gz
+data/*.db
+data/*.sqlite
+data/cache/
+!data/scryfall/.gitkeep
+!data/rules/.gitkeep
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Env / secrets
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
