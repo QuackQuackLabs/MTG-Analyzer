@@ -158,6 +158,7 @@ def _cmd_interaction(args: argparse.Namespace) -> int:
     store = RulesStore()
     try:
         inter = explain_interaction(args.card_a, args.card_b, db, store)
+        raw_combos: list = []
         if not args.no_combos and len(inter.cards) == 2:
             async def fetch() -> list:
                 try:
@@ -166,16 +167,21 @@ def _cmd_interaction(args: argparse.Namespace) -> int:
                     return result.included
                 except Exception:  # noqa: BLE001
                     return []
-            inter.combos = _combo_descriptions(asyncio.run(fetch()))
+            raw_combos = asyncio.run(fetch())
 
         for k in inter.cards:
             print("=" * 4, k.name, "=" * 4)
             _print_card_knowledge(k)
             print()
-        if inter.combos:
-            print(f"Combo(s) formed by these cards ({len(inter.combos)}):")
-            for c in inter.combos:
-                print(f"  ⚡ {c}")
+        if raw_combos:
+            print(f"Combo(s) formed by these cards ({len(raw_combos)}):")
+            for c in raw_combos:
+                print(f"  ⚡ Produces: {' + '.join(c.produces)}")
+                if c.prerequisites:
+                    print(f"     Prerequisites: {c.prerequisites}")
+                if c.description:
+                    for step in c.description.splitlines():
+                        print(f"     {step}")
         elif len(inter.cards) == 2 and not args.no_combos:
             print("No known two-card combo between them (per Commander Spellbook).")
         for note in inter.notes:
