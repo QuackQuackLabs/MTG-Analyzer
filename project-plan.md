@@ -175,11 +175,21 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       to avoid labeling sim noise. *Sauron: swaps pull commander median turn 7 → 6.* `--no-sim` to skip.
 - [ ] turn-to-combo metric; sim charts (deferred with the web UI).
 
-### Phase 6 — Deck construction from inventory  `[ ]`
-- [ ] Given a commander (or "suggest commanders from my inventory"), build a legal 99 using owned
-      cards first, filling category/curve targets via the recommender.
-- [ ] Output: decklist + shopping list for gaps the inventory can't fill (budget cap aware).
-- [ ] Optionally seed from EDHREC average deck for the commander, intersected with inventory.
+### Phase 6 — Deck construction from inventory  `[x]`
+- [x] **`recommend/builder.py`**: `build_deck(commander, owned, db, edhrec_cards, *, budget,
+      owned_only)`. Greedy build over EDHREC recommendations ∪ owned cards (filtered to identity +
+      Commander-legal): fills functional targets (37 land / 10 ramp / 10 draw / 10 removal / 3 wipe)
+      owned-first then by synergy, then payoffs, then a manabase (owned nonbasic lands + basics split
+      by color). `models/build.py`.
+- [x] **Output:** decklist grouped by category with owned ✓ / buy $ markers + a shopping list and
+      total cost. Budget cap (skips buys over budget, reports if short). `--owned-only` mode. Notes
+      report category shortfalls.
+- [x] **`mtg deck build "<commander>" [--budget] [--owned-only]`** + **`mtg deck suggest-commanders`**
+      (legal commanders in your collection, by popularity). Tests in `test_builder.py`.
+      *Demo: full 100-card Sauron list from EDHREC staples ($311 buy); $20-budget → 84/100; owned-only
+      with the tiny test inventory → 40/100 with clear shortfall notes.*
+- Seeds from EDHREC recommendations (∩ inventory via owned-first). Manabase upgrade
+  (duals/fetches) is a future refinement.
 
 ### Phase 7 — Polish & quality  `[ ]`
 - [ ] Save/load decks & analyses locally; deck version history / diffs.
@@ -276,4 +286,9 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 - **2026-06-18** — **Recommender is now sim-aware.** `mtg deck recommend` runs before/after goldfish
   sims around the proposed swaps and reports the delta; recommender boosts ramp when the sim shows a
   slow commander / screw. Added `apply_swaps`; noise band on deltas. 65 tests. Sauron swaps →
-  commander median turn 7→6. Next options: deck-building from inventory (Phase 6) or interaction Q&A.
+  commander median turn 7→6.
+- **2026-06-18** — **Phase 6 complete (deck construction).** `mtg deck build "<commander>"` greedily
+  builds a legal 100 from EDHREC staples ∪ owned cards (owned-first), filling category targets +
+  manabase; decklist with owned/buy markers, shopping list, budget cap, `--owned-only`. Plus
+  `mtg deck suggest-commanders`. 69 tests. Becomes fully owned-aware once a real collection is
+  imported. Remaining: interaction Q&A (Phase 4 finish), Phase 7 polish, web UI (publishing).

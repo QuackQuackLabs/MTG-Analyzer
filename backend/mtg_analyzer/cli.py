@@ -23,8 +23,10 @@ from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
+from mtg_analyzer.models.card import Card
 from mtg_analyzer.models.combo import Combo
 from mtg_analyzer.models.deck import ResolvedDeck
+from mtg_analyzer.recommend.builder import build_deck
 from mtg_analyzer.recommend.edhrec import EdhrecClient
 from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
 from mtg_analyzer.simulation.goldfish import simulate
@@ -388,6 +390,83 @@ def _cmd_deck_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _is_legal_commander_card(card: Card) -> bool:
+    tl = (card.type_line or "").lower()
+    return (("legendary" in tl and "creature" in tl)
+            or "can be your commander" in card.get_oracle_text().lower())
+
+
+def _cmd_deck_build(args: argparse.Namespace) -> int:
+    db = CardDatabase()
+    store = InventoryStore()
+    try:
+        commander = db.get_by_name(args.commander)
+        if commander is None:
+            print(f"No card named {args.commander!r}.", file=sys.stderr)
+            return 1
+        if not _is_legal_commander_card(commander):
+            print(f"{commander.name} isn't a legal commander.", file=sys.stderr)
+            return 1
+        owned = set(store.owned_by_oracle())
+
+        async def fetch() -> list:
+            async with EdhrecClient() as client:
+                return await client.commander_cards([commander.name])
+
+        edhrec = asyncio.run(fetch())
+        deck = build_deck(commander, owned, db, edhrec, budget=args.budget,
+                          owned_only=args.owned_only)
+    finally:
+        store.close()
+        db.close()
+
+    print(f"Built deck for {deck.commander}  [{deck.identity}]  ({deck.total_cards}/100 cards)")
+    print(f"Owned: {deck.owned_count} cards · To buy: {deck.buy_count} · Buy cost: ${deck.buy_cost:.2f}\n")
+    order = ["land", "ramp", "draw", "removal", "board_wipe", "payoff"]
+    by_cat: dict[str, list] = {}
+    for c in deck.cards:
+        by_cat.setdefault(c.category or "payoff", []).append(c)
+    for cat in order:
+        items = by_cat.get(cat, [])
+        if not items:
+            continue
+        n = sum(c.quantity for c in items)
+        print(f"{cat.upper()} ({n}):")
+        for c in sorted(items, key=lambda c: (not c.owned, c.name)):
+            qty = f"{c.quantity}x " if c.quantity > 1 else ""
+            mark = "✓ owned" if c.owned else (f"buy ${c.price_usd:.2f}" if c.price_usd else "buy")
+            print(f"  {qty}{c.name:32} [{mark}]")
+    if deck.buy_count:
+        print(f"\nShopping list ({deck.buy_count} cards, ${deck.buy_cost:.2f}):")
+        for c in sorted((c for c in deck.cards if not c.owned), key=lambda c: -(c.price_usd or 0)):
+            print(f"  {c.name:32} ${c.price_usd:.2f}" if c.price_usd else f"  {c.name}")
+    for note in deck.notes:
+        print(f"  • {note}")
+    return 0
+
+
+def _cmd_deck_suggest_commanders(args: argparse.Namespace) -> int:
+    db = CardDatabase()
+    store = InventoryStore()
+    try:
+        owned = store.owned_by_oracle()
+        commanders = [
+            c for oid in owned if (c := db.get_by_oracle_id(oid)) and _is_legal_commander_card(c)
+        ]
+        commanders.sort(key=lambda c: c.edhrec_rank or 10**9)
+        if not commanders:
+            print("No potential commanders found in your collection. "
+                  "Import a collection first: `mtg inventory import <csv>`.")
+            return 0
+        print(f"Potential commanders you own ({len(commanders)}):")
+        for c in commanders[: args.limit]:
+            print(f"  {c.name:32} [{''.join(c.color_identity) or 'C'}]  {c.type_line}")
+    finally:
+        store.close()
+        db.close()
+    return 0
+
+
 def _cmd_inventory_import(args: argparse.Namespace) -> int:
     items = parse_inventory_csv(Path(args.file).read_text(encoding="utf-8"))
     db = CardDatabase()
@@ -497,6 +576,14 @@ def main(argv: list[str] | None = None) -> int:
     d_sim.add_argument("--games", type=int, default=10_000)
     d_sim.add_argument("--draw", action="store_true", help="simulate on the draw (default: on the play)")
     d_sim.set_defaults(func=_cmd_deck_simulate)
+    d_build = deck.add_parser("build", help="build a deck for a commander from your collection")
+    d_build.add_argument("commander", help="commander name")
+    d_build.add_argument("--budget", type=float, help="max USD for not-owned cards")
+    d_build.add_argument("--owned-only", action="store_true", help="use only cards you own")
+    d_build.set_defaults(func=_cmd_deck_build)
+    deck.add_parser("suggest-commanders", help="legal commanders in your collection").set_defaults(
+        func=_cmd_deck_suggest_commanders, limit=25
+    )
 
     inv = sub.add_parser("inventory", help="card collection").add_subparsers(
         dest="inventory_command", required=True
