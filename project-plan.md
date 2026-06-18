@@ -105,22 +105,27 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done. Update inline as work com
 - **Validated on the real 38k-card DB:** Atraxa deck resolves to `[BGUW]`; a ManaBox CSV aggregates
   Sol Ring to owned 3 across 2 printings. Drop real exports in `samples/` to harden further.
 
-### Phase 3 — Deck analysis & validation  `[ ]` ← **first user-facing milestone**
-- [ ] **Legality validation:** 100 cards, singleton (basics exempt), commander is legal commander,
-      every card's `color_identity ⊆ commander identity`, banned-list check, Game-Changer count
-      (for bracket). Companion edge case flagged.
-- [ ] **Category analysis:** classify each card (lands / ramp / card draw / spot removal / board
-      wipe / tutor / protection / payoff / win-con) via Scryfall function tags (`otag:`) → oracle
-      regex → type-line fallback. Compare to composition template (~36–38 land, ~10 ramp, ~10 draw,
-      ~10 removal, ~3 wipes) → gap report.
-- [ ] **Curve analysis:** CMC histogram; flag too-high curve vs ramp count.
-- [ ] **Bracket estimate** (1–5) from Game-Changer count + combo presence + tutor/fast-mana density.
+### Phase 3 — Deck analysis & validation  `[~]` ← **first user-facing milestone**
+Staged: **3a** analysis engine (this) → **3b** recommender + shopping list → **3c** FastAPI routes →
+**3d** React views.
+- [x] **3a — Analysis engine** (`analysis/`, `models/analysis.py`). **Validation:** exactly 100,
+      singleton (basics + "any number / up to N named" cards like Nazgûl/Relentless Rats exempt),
+      legal commander check, `color_identity ⊆ commander identity`, banned + Game-Changer via Scryfall
+      per-card fields (no hard-coded lists). **Category analysis:** heuristic classifier (type line +
+      oracle-regex, Archidekt category as a hint) → counts vs Command-Zone targets (37 land / 10 ramp
+      / 10 draw / 10 removal / 3 wipes) → gaps. **Curve:** nonland CMC histogram. **Bracket estimate**
+      (1–5) from Game-Changer + tutor density (combo-refined in Phase 4). CLI `mtg deck analyze`.
+      Tests in `test_analysis.py`. *Validated on real decks: Sauron → LEGAL, bracket 4 (4 Game
+      Changers); the Nazgûl/signet cases drove two real fixes.*
+- [ ] **3b — Recommendations (static, no sim):** rank candidates (see §5) to fill the biggest gaps;
+      explanations; respect color identity, singleton, banlist, budget.
 - [ ] **Recommendations (static, no sim):** rank candidate cards (see §5) to fill the biggest gaps;
       attach explanation strings; respect color identity, singleton, banlist, budget.
-- [ ] **Budget shopping list:** owned (from inventory) vs to-buy, with Scryfall `prices.usd`
+- [ ] **3b — Budget shopping list:** owned (from inventory) vs to-buy, with Scryfall `prices.usd`
       (min across reprints) and functional cheaper-substitute suggestions.
-- [ ] API routes + frontend views: import deck → validation report → category/curve charts →
-      ranked recommendations → shopping list. Card images from Scryfall (cache locally).
+- [ ] **3c — FastAPI routes:** import/analyze deck, inventory, recommendations (thin over the engine).
+- [ ] **3d — React views:** import deck → validation report → category/curve charts → ranked
+      recommendations → shopping list. Card images from Scryfall (cache locally).
 
 ### Phase 4 — Combo & interaction detection  `[~]`
 - [x] **Comprehensive Rules corpus (pulled forward).** `rules/comprehensive.py` auto-discovers the
@@ -236,4 +241,10 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   44 tests; ruff/mypy clean. Caught + fixed a resolution bug via real-data validation: set+collector
   tried before name could match a *different* card's representative printing (Sol Ring split into 2
   oracles) → switched to name-first + regression test. `samples/` added for real exports.
-  Next: **Phase 3 — deck analysis & validation** (first user-facing milestone).
+- **2026-06-17** — **Phase 2 hardened on real exports.** User provided a ManaBox `.txt` and an
+  Archidekt `.csv` (both decks). Added ManaBox `// COMMANDER` marker handling + Archidekt headerless
+  CSV deck parsing with auto-detection. Both parse to 100 cards, 0 unresolved.
+- **2026-06-17** — **Phase 3a complete (analysis engine).** Validation + category/curve analysis +
+  bracket estimate; CLI `mtg deck analyze`. 53 tests. Real-deck validation drove two fixes: Nazgûl
+  singleton exemption (and Relentless Rats etc.) and broader ramp detection (signets). Next: **3b
+  recommender + shopping list**, then **3c API**, **3d React UI**.

@@ -38,6 +38,7 @@ class ResolvedEntry(BaseModel):
     section: str
     requested_name: str
     card: Card | None = None  # None when the name couldn't be resolved
+    category: str | None = None  # source category hint (e.g. Archidekt tag), if any
 
     @property
     def resolved(self) -> bool:

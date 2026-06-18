@@ -19,6 +19,7 @@ from mtg_analyzer.combos.store import ComboStore
 from mtg_analyzer.data.bulk import BulkDataManager
 from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.data.inventory_store import InventoryStore
+from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
@@ -227,6 +228,41 @@ def _cmd_deck_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_deck_analyze(args: argparse.Namespace) -> int:
+    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
+    db = CardDatabase()
+    try:
+        report = analyze(resolve_deck(db, parsed))
+    finally:
+        db.close()
+
+    cmd = ", ".join(report.commanders) or "(none)"
+    print(f"{report.name or parsed.source_format} — Commander: {cmd}  [{report.identity}]")
+    v = report.validation
+    print(f"\nLegality: {'LEGAL' if v.legal else 'ILLEGAL'}  ({v.card_count} cards)")
+    for issue in v.issues:
+        print(f"  ✗ {issue}")
+    for warn in v.warnings:
+        print(f"  ! {warn}")
+
+    print("\nComposition (count / target):")
+    for c in report.categories:
+        flag = f"  ↑ need {c.gap}" if c.gap else ""
+        tgt = f"/{c.target}" if c.target else ""
+        print(f"  {c.category:12} {c.count}{tgt}{flag}")
+
+    print("\nMana curve (nonland):")
+    peak = max((b.count for b in report.curve), default=1) or 1
+    for b in report.curve:
+        label = f"{b.cmc}+" if b.cmc == 7 else str(b.cmc)
+        print(f"  {label:>2}  {'█' * round(b.count / peak * 24)} {b.count}")
+
+    print(f"\nBracket estimate: {report.bracket_estimate}  — {report.bracket_rationale}")
+    if report.game_changers:
+        print(f"Game Changers ({len(report.game_changers)}): {', '.join(report.game_changers)}")
+    return 0
+
+
 def _cmd_inventory_import(args: argparse.Namespace) -> int:
     items = parse_inventory_csv(Path(args.file).read_text(encoding="utf-8"))
     db = CardDatabase()
@@ -320,6 +356,9 @@ def main(argv: list[str] | None = None) -> int:
     d_show = deck.add_parser("show", help="parse + resolve a decklist file")
     d_show.add_argument("file")
     d_show.set_defaults(func=_cmd_deck_show)
+    d_analyze = deck.add_parser("analyze", help="validate + analyze a decklist")
+    d_analyze.add_argument("file")
+    d_analyze.set_defaults(func=_cmd_deck_analyze)
 
     inv = sub.add_parser("inventory", help="card collection").add_subparsers(
         dest="inventory_command", required=True

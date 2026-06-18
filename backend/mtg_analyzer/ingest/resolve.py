@@ -42,6 +42,7 @@ def resolve_deck(db: CardDatabase, parsed: ParsedDeck) -> ResolvedDeck:
             quantity=e.quantity,
             section=e.section,
             requested_name=e.name,
+            category=e.category,
             card=resolve_card(db, name=e.name, set_code=e.set_code,
                               collector_number=e.collector_number),
         )
