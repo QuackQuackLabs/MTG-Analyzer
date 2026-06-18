@@ -26,7 +26,7 @@ from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 from mtg_analyzer.models.combo import Combo
 from mtg_analyzer.models.deck import ResolvedDeck
 from mtg_analyzer.recommend.edhrec import EdhrecClient
-from mtg_analyzer.recommend.recommender import build_recommendations
+from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
 from mtg_analyzer.simulation.goldfish import simulate
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
 from mtg_analyzer.rules.store import RulesStore
@@ -304,8 +304,11 @@ def _cmd_deck_recommend(args: argparse.Namespace) -> int:
                 return await client.commander_cards(report.commanders)
 
         edhrec_cards = asyncio.run(fetch())
+        before = None if args.no_sim else simulate(deck, games=args.games, seed=1)
         recs = build_recommendations(deck, report, edhrec_cards, db, owned=owned,
-                                     budget=args.budget)
+                                     budget=args.budget, sim=before)
+        after = None if args.no_sim else simulate(apply_swaps(deck, recs, db),
+                                                  games=args.games, seed=1)
     finally:
         store.close()
         db.close()
@@ -325,9 +328,32 @@ def _cmd_deck_recommend(args: argparse.Namespace) -> int:
 
     print(f"\nNet: swap ~{min(len(recs.adds), len(recs.cuts))} cards (deck stays 100). "
           f"Estimated buy cost: ${recs.buy_cost:.2f}")
+
+    if before and after:
+        print("\nProjected impact (goldfish sim, before → after):")
+        _sim_delta("keepable hand", before.p_keepable_hand, after.p_keepable_hand, pct=True)
+        _sim_delta("mana screw", before.screw_rate, after.screw_rate, pct=True, lower_better=True)
+        if before.commander_turn and after.commander_turn:
+            bt, at = before.commander_turn.median, after.commander_turn.median
+            if bt is not None and at is not None:
+                arrow = "↓ faster" if at < bt else ("↑ slower" if at > bt else "no change")
+                print(f"  commander castable (median turn):  {bt} → {at}   {arrow}")
+
     for note in recs.notes:
         print(f"  • {note}")
     return 0
+
+
+def _sim_delta(label: str, before: float, after: float, *, pct: bool = False,
+               lower_better: bool = False, band: float = 0.02) -> None:
+    """Print a before→after metric, treating sub-`band` moves as sim noise ('≈ same')."""
+    fmt = (lambda x: f"{x:.0%}") if pct else (lambda x: f"{x:.2f}")
+    if abs(after - before) <= band:
+        tag = "  ≈ same"
+    else:
+        improved = (after < before) if lower_better else (after > before)
+        tag = "  ✓ better" if improved else "  worse"
+    print(f"  {label:33} {fmt(before)} → {fmt(after)}{tag}")
 
 
 def _cmd_deck_simulate(args: argparse.Namespace) -> int:
@@ -460,9 +486,11 @@ def main(argv: list[str] | None = None) -> int:
     d_analyze.add_argument("--no-combos", action="store_true",
                            help="skip the live combo lookup (offline / faster)")
     d_analyze.set_defaults(func=_cmd_deck_analyze)
-    d_rec = deck.add_parser("recommend", help="suggest cuts + adds (EDHREC-blended)")
+    d_rec = deck.add_parser("recommend", help="suggest cuts + adds (EDHREC-blended, sim-aware)")
     d_rec.add_argument("file")
     d_rec.add_argument("--budget", type=float, help="max USD to spend on not-owned adds")
+    d_rec.add_argument("--games", type=int, default=6000, help="sim games for before/after")
+    d_rec.add_argument("--no-sim", action="store_true", help="skip the before/after simulation")
     d_rec.set_defaults(func=_cmd_deck_recommend)
     d_sim = deck.add_parser("simulate", help="goldfish consistency simulation")
     d_sim.add_argument("file")

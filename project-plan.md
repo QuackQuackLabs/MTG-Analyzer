@@ -168,7 +168,12 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       flood/screw rates, avg mulligans, commander-castable turn (median/mean/p90/never%). CLI
       `mtg deck simulate [--games --draw]`. Tests in `test_simulation.py` (incl. determinism).
       *Sauron: 79% keepable, 50% P(≥3 lands), 1% screw, commander castable median T7.*
-- [ ] Feed sim output back into the recommender (consistency-driven suggestions); turn-to-combo.
+- [x] **Feed sim into the recommender:** `mtg deck recommend` now simulates **before/after** the
+      proposed swaps and shows the delta (keepable / screw / commander-turn), and the recommender
+      weighs sim signals (slow commander or high screw → boosts ramp priority, with an explanatory
+      note). `apply_swaps` builds the hypothetical post-swap deck. Sub-`band` deltas shown as "≈ same"
+      to avoid labeling sim noise. *Sauron: swaps pull commander median turn 7 → 6.* `--no-sim` to skip.
+- [ ] turn-to-combo metric; sim charts (deferred with the web UI).
 
 ### Phase 6 — Deck construction from inventory  `[ ]`
 - [ ] Given a commander (or "suggest commanders from my inventory"), build a legal 99 using owned
@@ -267,5 +272,8 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 - **2026-06-18** — **Phase 5 simulation built.** Hypergeometric module (scipy) + Monte-Carlo goldfish
   (numpy, seeded, London mulligan). CLI `mtg deck simulate`. 63 tests. Fixed a stats bug (opening-hand
   keepable% was measured post-mulligan → ~100%; now measured on the first 7). Sauron: 79% keepable,
-  commander castable median T7. Mana model is intentionally approximate (single pool). Next options:
-  feed sim into recommender, deck-building from inventory (Phase 6), or interaction Q&A.
+  commander castable median T7. Mana model is intentionally approximate (single pool).
+- **2026-06-18** — **Recommender is now sim-aware.** `mtg deck recommend` runs before/after goldfish
+  sims around the proposed swaps and reports the delta; recommender boosts ramp when the sim shows a
+  slow commander / screw. Added `apply_swaps`; noise band on deltas. 65 tests. Sauron swaps →
+  commander median turn 7→6. Next options: deck-building from inventory (Phase 6) or interaction Q&A.

@@ -10,8 +10,9 @@ from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.models.card import Card
 from mtg_analyzer.models.deck import ResolvedDeck, ResolvedEntry
+from mtg_analyzer.models.simulation import CommanderTurnStats, SimResult
 from mtg_analyzer.recommend.edhrec import EdhrecCard, slugify
-from mtg_analyzer.recommend.recommender import build_recommendations
+from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -86,3 +87,33 @@ def test_cold_start_no_edhrec_data(db: CardDatabase) -> None:
     recs = build_recommendations(deck, analyze(deck), [], db)
     assert recs.adds == []  # no candidates without EDHREC data
     assert any("cold-start" in n for n in recs.notes)
+
+
+def _sim(commander_cmc: int, median_turn: int) -> SimResult:
+    return SimResult(
+        games=100, on_play=True, land_count=37, ramp_count=8, commander_cmc=commander_cmc,
+        avg_lands_in_opening=2.6, p_keepable_hand=0.8, p_three_plus_lands_exact=0.5,
+        avg_mulligans=0.3, flood_rate=0.02, screw_rate=0.05,
+        commander_turn=CommanderTurnStats(mean=float(median_turn), median=median_turn,
+                                          p90=median_turn + 3, never_pct=1.0),
+        notes=[],
+    )
+
+
+def test_sim_slow_commander_prioritizes_ramp(db: CardDatabase) -> None:
+    deck = _deck()
+    edhrec = [EdhrecCard(name="Sol Ring", synergy=0.3, inclusion=80, potential_decks=100)]
+    recs = build_recommendations(deck, analyze(deck), edhrec, db, sim=_sim(commander_cmc=2,
+                                                                          median_turn=6))
+    assert any("prioritizing ramp" in n for n in recs.notes)  # lateness 4 -> boost + note
+
+
+def test_apply_swaps_removes_cut_and_inserts_add(db: CardDatabase) -> None:
+    deck = _deck()
+    edhrec = [EdhrecCard(name="Sol Ring", synergy=0.3, inclusion=80, potential_decks=100)]
+    recs = build_recommendations(deck, analyze(deck), edhrec, db)
+    new_deck = apply_swaps(deck, recs, db)
+    names = {e.card.name for e in new_deck.entries if e.card}
+    assert "Sol Ring" in names  # add inserted
+    cut_names = {c.name for c in recs.cuts}
+    assert not (cut_names & {e.requested_name for e in new_deck.mainboard})  # cuts removed

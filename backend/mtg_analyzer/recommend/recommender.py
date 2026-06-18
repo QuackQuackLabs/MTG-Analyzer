@@ -16,8 +16,9 @@ import re
 from mtg_analyzer.analysis.categorize import BOARD_WIPE, DRAW, RAMP, REMOVAL, categorize
 from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.models.analysis import DeckReport
-from mtg_analyzer.models.deck import ResolvedDeck
+from mtg_analyzer.models.deck import ResolvedDeck, ResolvedEntry
 from mtg_analyzer.models.recommendation import AddSuggestion, CutSuggestion, Recommendations
+from mtg_analyzer.models.simulation import SimResult
 from mtg_analyzer.recommend.edhrec import EdhrecCard
 
 _GAP_CATEGORIES = (RAMP, DRAW, REMOVAL, BOARD_WIPE)
@@ -34,9 +35,11 @@ def build_recommendations(
     *,
     owned: set[str] | None = None,
     budget: float | None = None,
+    sim: SimResult | None = None,
 ) -> Recommendations:
     owned = owned or set()
     notes: list[str] = []
+    ramp_boost = _consistency_ramp_boost(sim, report, notes)
 
     in_deck_names = {
         (e.card.name if e.card else e.requested_name).lower()
@@ -69,7 +72,9 @@ def build_recommendations(
         is_owned = bool(card.oracle_id and card.oracle_id in owned)
         synergy = ec.synergy or 0.0
         # Score: gap demand dominates, then synergy, then popularity; owned is "free".
-        score = (gaps.get(gap_cat, 0) * 2.0 if gap_cat else 0.0) + max(synergy, 0.0) * 3 \
+        # Consistency: when the sim shows a slow commander / screw, ramp is worth more.
+        gap_demand = (gaps.get(gap_cat, 0) if gap_cat else 0) + (ramp_boost if gap_cat == RAMP else 0)
+        score = (gap_demand * 2.0 if gap_cat else 0.0) + max(synergy, 0.0) * 3 \
             + (ec.inclusion_rate or 0.0) + (0.5 if is_owned else 0.0)
         reason_bits = []
         if gap_cat:
@@ -120,6 +125,44 @@ def build_recommendations(
 
     return Recommendations(commander=", ".join(report.commanders) or "(unknown)",
                            adds=adds, cuts=cuts, buy_cost=buy_cost, notes=notes)
+
+
+def _consistency_ramp_boost(
+    sim: SimResult | None, report: DeckReport, notes: list[str]
+) -> int:
+    """Extra ramp priority derived from simulation (slow commander / mana screw)."""
+    if sim is None:
+        return 0
+    boost = 0
+    ct = sim.commander_turn
+    if ct and ct.median is not None and sim.commander_cmc is not None:
+        lateness = ct.median - sim.commander_cmc
+        if lateness >= 2:
+            boost += lateness
+            notes.append(f"Simulation: commander lands ~turn {ct.median} (MV {sim.commander_cmc}) — "
+                         "prioritizing ramp to deploy it sooner.")
+    if sim.screw_rate > 0.12:
+        boost += 1
+        notes.append(f"Simulation: {sim.screw_rate:.0%} mana-screw rate — favoring ramp/fixing.")
+    return boost
+
+
+def apply_swaps(deck: ResolvedDeck, recs: Recommendations, db: CardDatabase) -> ResolvedDeck:
+    """Return a new deck with the recommended cuts removed and adds inserted (for before/after sim)."""
+    to_cut = {c.name.lower() for c in recs.cuts}
+    cut_done: set[str] = set()
+    kept: list[ResolvedEntry] = []
+    for e in deck.entries:
+        name = (e.card.name if e.card else e.requested_name).lower()
+        if e.section == "main" and name in to_cut and name not in cut_done:
+            cut_done.add(name)  # remove one copy (cut candidates are singleton nonbasics)
+            continue
+        kept.append(e)
+    for a in recs.adds:
+        card = db.get_by_name(a.name)
+        if card:
+            kept.append(ResolvedEntry(quantity=1, section="main", requested_name=a.name, card=card))
+    return ResolvedDeck(name=deck.name, entries=kept)
 
 
 def _fit_budget(adds: list[AddSuggestion], budget: float, notes: list[str]) -> list[AddSuggestion]:
