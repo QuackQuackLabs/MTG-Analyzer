@@ -43,5 +43,5 @@ asyncio_mode = "auto"
 mypy_path = "backend"
 
 [[tool.mypy.overrides]]
-module = ["ijson.*"]
+module = ["ijson.*", "scipy.*"]
 ignore_missing_imports = true

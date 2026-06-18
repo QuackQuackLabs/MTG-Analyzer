@@ -157,15 +157,18 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
 - [ ] Interaction/ruling Q&A: combine Scryfall rulings (Phase 1) + comprehensive-rules sections +
       combo data into a single "what happens / what governs this?" lookup.
 
-### Phase 5 — Game simulation & analytics  `[ ]`
-- [ ] Hypergeometric module (scipy): P(≥k lands in opening 7), P(see card/combo by turn N),
-      P(≥1 of K ramp pieces), Karsten-style color-source checks. Model 99-card library.
-- [ ] Monte-Carlo goldfish engine (numpy, seeded RNG over integer card IDs): London mulligan keep
-      policy, turn loop with simple land/ramp/cast heuristics. Separate engine from policy.
-- [ ] Metrics: keep%, avg/percentile turn-to-cast-commander, turn-to-assemble-combo, "dead hand" %,
-      mana-screw/flood rates. Report distributions, not just means.
-- [ ] Feed sim output back into the recommender (consistency-driven suggestions).
-- [ ] Frontend: run-sim view with charts + before/after comparison for proposed swaps.
+### Phase 5 — Game simulation & analytics  `[~]`
+- [x] **Hypergeometric module** (`simulation/probability.py`, scipy): exact P(≥k of a group in N
+      draws), `cards_seen_by_turn`, `p_see_by_turn`. Models the 99-card library.
+- [x] **Monte-Carlo goldfish** (`simulation/goldfish.py`, numpy seeded RNG): `DeckProfile.from_resolved`
+      (land/ramp/cmc arrays), London-mulligan keep-2–5 policy, turn loop (land drop, ramp deploy,
+      commander-castable check). Engine separate from policy. Honestly approximate: single mana pool,
+      no colored requirements, ramp = +1 from next turn.
+- [x] **Metrics** (`models/simulation.py`): avg opening lands, keepable%, exact P(≥3 lands),
+      flood/screw rates, avg mulligans, commander-castable turn (median/mean/p90/never%). CLI
+      `mtg deck simulate [--games --draw]`. Tests in `test_simulation.py` (incl. determinism).
+      *Sauron: 79% keepable, 50% P(≥3 lands), 1% screw, commander castable median T7.*
+- [ ] Feed sim output back into the recommender (consistency-driven suggestions); turn-to-combo.
 
 ### Phase 6 — Deck construction from inventory  `[ ]`
 - [ ] Given a commander (or "suggest commanders from my inventory"), build a legal 99 using owned
@@ -257,4 +260,12 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   filling synergy adds + lowest-play-rate cut candidates (commander/Game-Changer/theme protected),
   buy cost, owned-aware, budget cap. CLI `mtg deck recommend`. 58 tests. Building it surfaced + fixed
   a selection bug (general-upgrades loop dumped all candidates → suggested cutting the whole deck)
-  and added cut protections. Next: **3c FastAPI routes**, **3d React UI**.
+  and added cut protections.
+- **2026-06-18** — **Combos wired into analysis** + **interface pivot to chat-first** (web UI deferred
+  to publishing). `mtg deck analyze` now lists combos present and factors them into the bracket
+  (Sauron → Fall of Cair Andros + Blasphemous Act).
+- **2026-06-18** — **Phase 5 simulation built.** Hypergeometric module (scipy) + Monte-Carlo goldfish
+  (numpy, seeded, London mulligan). CLI `mtg deck simulate`. 63 tests. Fixed a stats bug (opening-hand
+  keepable% was measured post-mulligan → ~100%; now measured on the first 7). Sauron: 79% keepable,
+  commander castable median T7. Mana model is intentionally approximate (single pool). Next options:
+  feed sim into recommender, deck-building from inventory (Phase 6), or interaction Q&A.

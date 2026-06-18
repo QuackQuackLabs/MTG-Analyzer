@@ -27,6 +27,7 @@ from mtg_analyzer.models.combo import Combo
 from mtg_analyzer.models.deck import ResolvedDeck
 from mtg_analyzer.recommend.edhrec import EdhrecClient
 from mtg_analyzer.recommend.recommender import build_recommendations
+from mtg_analyzer.simulation.goldfish import simulate
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
 from mtg_analyzer.rules.store import RulesStore
 
@@ -329,6 +330,38 @@ def _cmd_deck_recommend(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_deck_simulate(args: argparse.Namespace) -> int:
+    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
+    db = CardDatabase()
+    try:
+        deck = resolve_deck(db, parsed)
+    finally:
+        db.close()
+    r = simulate(deck, games=args.games, on_play=not args.draw)
+
+    play = "on the play" if r.on_play else "on the draw"
+    print(f"Goldfish simulation — {r.games:,} games ({play})")
+    print(f"  deck: {r.land_count} lands, {r.ramp_count} ramp"
+          + (f", commander MV {r.commander_cmc}" if r.commander_cmc is not None else ""))
+    print("\nOpening hand:")
+    print(f"  avg lands in 7:        {r.avg_lands_in_opening}")
+    print(f"  keepable (2–5 lands):  {r.p_keepable_hand:.0%}")
+    print(f"  P(>=3 lands) [exact]:  {r.p_three_plus_lands_exact:.0%}")
+    print(f"  flood (>=6 lands):     {r.flood_rate:.0%}")
+    print(f"  avg mulligans:         {r.avg_mulligans}")
+    print(f"\nMana screw (<2 lands by turn 3): {r.screw_rate:.0%}")
+    if r.commander_turn:
+        ct = r.commander_turn
+        print(f"\nTurn commander is castable: median {ct.median}, mean {ct.mean}, "
+              f"90% by turn {ct.p90}")
+        if ct.never_pct:
+            print(f"  not cast within {15} turns: {ct.never_pct}%")
+    for note in r.notes:
+        print(f"  • {note}")
+    print("\n(Approximate mana model: single mana pool, no colored-mana requirements.)")
+    return 0
+
+
 def _cmd_inventory_import(args: argparse.Namespace) -> int:
     items = parse_inventory_csv(Path(args.file).read_text(encoding="utf-8"))
     db = CardDatabase()
@@ -431,6 +464,11 @@ def main(argv: list[str] | None = None) -> int:
     d_rec.add_argument("file")
     d_rec.add_argument("--budget", type=float, help="max USD to spend on not-owned adds")
     d_rec.set_defaults(func=_cmd_deck_recommend)
+    d_sim = deck.add_parser("simulate", help="goldfish consistency simulation")
+    d_sim.add_argument("file")
+    d_sim.add_argument("--games", type=int, default=10_000)
+    d_sim.add_argument("--draw", action="store_true", help="simulate on the draw (default: on the play)")
+    d_sim.set_defaults(func=_cmd_deck_simulate)
 
     inv = sub.add_parser("inventory", help="card collection").add_subparsers(
         dest="inventory_command", required=True
