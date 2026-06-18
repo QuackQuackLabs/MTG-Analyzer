@@ -12,6 +12,7 @@ venv/
 data/scryfall/*.json
 data/scryfall/*.json.gz
 data/rules/*.txt
+data/decks/
 data/*.db
 data/*.sqlite
 data/cache/

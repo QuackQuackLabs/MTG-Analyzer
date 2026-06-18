@@ -18,6 +18,7 @@ from mtg_analyzer.combos.client import CommanderSpellbookClient
 from mtg_analyzer.combos.store import ComboStore
 from mtg_analyzer.data.bulk import BulkDataManager
 from mtg_analyzer.data.db import CardDatabase
+from mtg_analyzer.data.deck_library import DeckLibrary, load_deck_text
 from mtg_analyzer.data.inventory_store import InventoryStore
 from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.ingest.decklist import parse_deck
@@ -27,7 +28,7 @@ from mtg_analyzer.models.card import Card
 from mtg_analyzer.models.combo import Combo
 from mtg_analyzer.models.deck import ResolvedDeck
 from mtg_analyzer.recommend.builder import build_deck
-from mtg_analyzer.recommend.edhrec import EdhrecClient
+from mtg_analyzer.recommend.edhrec import EdhrecCache, EdhrecClient
 from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
 from mtg_analyzer.simulation.goldfish import simulate
 from mtg_analyzer.models.qa import CardKnowledge
@@ -291,7 +292,7 @@ def _extract_card_names(text: str) -> list[str]:
 
 
 def _cmd_combos_find(args: argparse.Namespace) -> int:
-    names = _extract_card_names(Path(args.file).read_text(encoding="utf-8"))
+    names = _extract_card_names(load_deck_text(args.file))
     if not names:
         print("No card names found in file.", file=sys.stderr)
         return 1
@@ -312,7 +313,7 @@ def _cmd_combos_find(args: argparse.Namespace) -> int:
 
 
 def _cmd_deck_show(args: argparse.Namespace) -> int:
-    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
+    parsed = parse_deck(load_deck_text(args.file))
     db = CardDatabase()
     try:
         deck = resolve_deck(db, parsed)
@@ -334,7 +335,7 @@ def _cmd_deck_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_deck_analyze(args: argparse.Namespace) -> int:
-    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
+    parsed = parse_deck(load_deck_text(args.file))
     db = CardDatabase()
     try:
         deck = resolve_deck(db, parsed)
@@ -392,16 +393,17 @@ def _find_deck_combos(deck: ResolvedDeck) -> list[Combo]:
 
 
 def _cmd_deck_recommend(args: argparse.Namespace) -> int:
-    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
+    parsed = parse_deck(load_deck_text(args.file))
     db = CardDatabase()
     store = InventoryStore()
+    cache = EdhrecCache()
     try:
         deck = resolve_deck(db, parsed)
         report = analyze(deck)
         owned = set(store.owned_by_oracle())
 
         async def fetch() -> list:
-            async with EdhrecClient() as client:
+            async with EdhrecClient(cache=cache) as client:
                 return await client.commander_cards(report.commanders)
 
         edhrec_cards = asyncio.run(fetch())
@@ -411,6 +413,7 @@ def _cmd_deck_recommend(args: argparse.Namespace) -> int:
         after = None if args.no_sim else simulate(apply_swaps(deck, recs, db),
                                                   games=args.games, seed=1)
     finally:
+        cache.close()
         store.close()
         db.close()
 
@@ -458,7 +461,7 @@ def _sim_delta(label: str, before: float, after: float, *, pct: bool = False,
 
 
 def _cmd_deck_simulate(args: argparse.Namespace) -> int:
-    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
+    parsed = parse_deck(load_deck_text(args.file))
     db = CardDatabase()
     try:
         deck = resolve_deck(db, parsed)
@@ -489,6 +492,32 @@ def _cmd_deck_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_deck_save(args: argparse.Namespace) -> int:
+    text = Path(args.file).read_text(encoding="utf-8")
+    slug = DeckLibrary().save(args.name, text)
+    print(f"Saved deck as {slug!r}. Use it by name, e.g. `mtg deck analyze {slug}`.")
+    return 0
+
+
+def _cmd_deck_list(_: argparse.Namespace) -> int:
+    names = DeckLibrary().names()
+    if not names:
+        print("No saved decks. Save one: `mtg deck save <name> <file>`.")
+        return 0
+    print("Saved decks:")
+    for name in names:
+        print(f"  {name}")
+    return 0
+
+
+def _cmd_deck_remove(args: argparse.Namespace) -> int:
+    if DeckLibrary().remove(args.name):
+        print(f"Removed saved deck {args.name!r}.")
+        return 0
+    print(f"No saved deck named {args.name!r}.", file=sys.stderr)
+    return 1
+
+
 def _is_legal_commander_card(card: Card) -> bool:
     tl = (card.type_line or "").lower()
     return (("legendary" in tl and "creature" in tl)
@@ -498,6 +527,7 @@ def _is_legal_commander_card(card: Card) -> bool:
 def _cmd_deck_build(args: argparse.Namespace) -> int:
     db = CardDatabase()
     store = InventoryStore()
+    cache = EdhrecCache()
     try:
         commander = db.get_by_name(args.commander)
         if commander is None:
@@ -509,13 +539,14 @@ def _cmd_deck_build(args: argparse.Namespace) -> int:
         owned = set(store.owned_by_oracle())
 
         async def fetch() -> list:
-            async with EdhrecClient() as client:
+            async with EdhrecClient(cache=cache) as client:
                 return await client.commander_cards([commander.name])
 
         edhrec = asyncio.run(fetch())
         deck = build_deck(commander, owned, db, edhrec, budget=args.budget,
                           owned_only=args.owned_only)
     finally:
+        cache.close()
         store.close()
         db.close()
 
@@ -667,8 +698,16 @@ def main(argv: list[str] | None = None) -> int:
     deck = sub.add_parser("deck", help="decklist import").add_subparsers(
         dest="deck_command", required=True
     )
-    d_show = deck.add_parser("show", help="parse + resolve a decklist file")
-    d_show.add_argument("file")
+    d_save = deck.add_parser("save", help="save a decklist under a name")
+    d_save.add_argument("name")
+    d_save.add_argument("file")
+    d_save.set_defaults(func=_cmd_deck_save)
+    deck.add_parser("list", help="list saved decks").set_defaults(func=_cmd_deck_list)
+    d_remove = deck.add_parser("remove", help="delete a saved deck")
+    d_remove.add_argument("name")
+    d_remove.set_defaults(func=_cmd_deck_remove)
+    d_show = deck.add_parser("show", help="parse + resolve a deck (file or saved name)")
+    d_show.add_argument("file", help="deck file path or saved deck name")
     d_show.set_defaults(func=_cmd_deck_show)
     d_analyze = deck.add_parser("analyze", help="validate + analyze a decklist")
     d_analyze.add_argument("file")

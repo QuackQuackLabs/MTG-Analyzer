@@ -196,11 +196,16 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
 - Seeds from EDHREC recommendations (∩ inventory via owned-first). Manabase upgrade
   (duals/fetches) is a future refinement.
 
-### Phase 7 — Polish & quality  `[ ]`
-- [ ] Save/load decks & analyses locally; deck version history / diffs.
-- [ ] Caching layer + nightly refresh job for Scryfall bulk + EDHREC snapshots.
-- [ ] Error states for unresolved cards, offline mode, rate-limit handling surfaced in UI.
-- [ ] Test coverage pass; type-check clean; basic perf check on full card DB.
+### Phase 7 — Polish & quality  `[~]`
+- [x] **Saved deck library** (`data/deck_library.py`): `mtg deck save|list|remove`; all deck
+      commands accept a saved name *or* a file path (`load_deck_text`). Decks stored as text under
+      `data/decks/` (gitignored). *Version history / diffs deferred.*
+- [x] **EDHREC caching** (`EdhrecCache` in `recommend/edhrec.py`): 24h TTL in `app.db`; `recommend`
+      and `build` reuse cached commander data (cold 1.14s → warm 0.67s, no network). Scryfall bulk
+      already refreshes via the manifest (`mtg data refresh`). *A scheduled nightly job is future.*
+- [~] Error/offline handling: combos + EDHREC degrade gracefully (best-effort, empty on failure);
+      unresolved cards reported. Remaining: surface rate-limit/offline state more explicitly.
+- [ ] Test coverage pass; type-check clean; basic perf check on full card DB. *(78 tests, mypy clean.)*
 
 ## 5. Recommendation engine design (reference)
 
@@ -301,3 +306,8 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   and `mtg interaction "<a>" "<b>"` retrieve grounded sources (card text + rulings + CR rules +
   glossary + combos); Claude synthesizes the answer in chat. 74 tests. **Core feature set
   (Phases 0–6) is now complete.** Remaining: Phase 7 polish (saved decks, caching) + web UI (publishing).
+- **2026-06-18** — **Phase 7 progress: EDHREC caching + saved decks.** `EdhrecCache` (24h TTL in
+  app.db) makes recommend/build reuse commander data (1.14s → 0.67s warm). `DeckLibrary` +
+  `mtg deck save|list|remove`; deck commands accept a saved name or a path. 78 tests. Saved the two
+  sample decks (`sauron`, `cowabunga`). Remaining Phase 7: explicit offline/rate-limit states, a
+  scheduled refresh job, broader test/perf pass.

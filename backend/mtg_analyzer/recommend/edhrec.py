@@ -10,8 +10,11 @@ and `cardviews[]` with name / synergy / inclusion / num_decks / potential_decks.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
+import sqlite3
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -22,6 +25,7 @@ from mtg_analyzer import config
 EDHREC_JSON_BASE = "https://json.edhrec.com"
 _MIN_DELAY = 0.34
 _SLUG_STRIP = re.compile(r"[^a-z0-9 ]")
+_DEFAULT_TTL = 86_400  # 24h — EDHREC refreshes daily; cache to avoid re-hitting it
 
 
 class EdhrecCard(BaseModel):
@@ -49,12 +53,53 @@ def commander_slug(names: list[str]) -> str:
     return "-".join(sorted(slugify(n) for n in names if n))
 
 
+class EdhrecCache:
+    """Local cache of EDHREC commander results in app.db (TTL-based, default 24h)."""
+
+    def __init__(self, db_path: Path | None = None, *, ttl_seconds: int = _DEFAULT_TTL) -> None:
+        self.path = db_path or config.DB_PATH
+        self.ttl = ttl_seconds
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.path)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS edhrec_cache "
+            "(slug TEXT PRIMARY KEY, fetched_at REAL NOT NULL, cards_json TEXT NOT NULL)"
+        )
+
+    def close(self) -> None:
+        self.conn.close()
+
+    def __enter__(self) -> EdhrecCache:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def get(self, slug: str) -> list[EdhrecCard] | None:
+        row = self.conn.execute(
+            "SELECT fetched_at, cards_json FROM edhrec_cache WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None or time.time() - row[0] > self.ttl:
+            return None  # miss or stale
+        return [EdhrecCard.model_validate(d) for d in json.loads(row[1])]
+
+    def put(self, slug: str, cards: list[EdhrecCard]) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO edhrec_cache (slug, fetched_at, cards_json) VALUES (?,?,?)",
+            (slug, time.time(), json.dumps([c.model_dump() for c in cards])),
+        )
+        self.conn.commit()
+
+
 class EdhrecClient:
-    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient | None = None, *, cache: EdhrecCache | None = None
+    ) -> None:
         self._client = client or httpx.AsyncClient(
             base_url=EDHREC_JSON_BASE, headers=config.DEFAULT_HEADERS, timeout=30
         )
         self._owns_client = client is None
+        self._cache = cache
         self._last_request = 0.0
 
     async def aclose(self) -> None:
@@ -75,6 +120,9 @@ class EdhrecClient:
         slug = commander_slug(commander_names)
         if not slug:
             return []
+        if self._cache is not None and (hit := self._cache.get(slug)) is not None:
+            return hit  # fresh cache (includes cached empty results for cold-start commanders)
+
         delay = _MIN_DELAY - (time.monotonic() - self._last_request)
         if delay > 0:
             await asyncio.sleep(delay)
@@ -86,7 +134,10 @@ class EdhrecClient:
             data = resp.json()
         except (httpx.HTTPError, ValueError):
             return []
-        return _parse_cardlists(data)
+        cards = _parse_cardlists(data)
+        if self._cache is not None:
+            self._cache.put(slug, cards)
+        return cards
 
 
 def _parse_cardlists(data: dict[str, Any]) -> list[EdhrecCard]:
