@@ -130,7 +130,7 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       interface is now chat-driven. Keep the engine UI-agnostic so these can be added later. The
       existing `/health` FastAPI app + Vite scaffold remain as the seed.
 
-### Phase 4 — Combo & interaction detection  `[~]`
+### Phase 4 — Combo & interaction detection  `[x]`
 - [x] **Comprehensive Rules corpus (pulled forward).** `rules/comprehensive.py` auto-discovers the
       current rules `.txt` from magic.wizards.com, downloads + parses it (sections / categories /
       rules / subrules + glossary). `rules/store.py` stores it in `app.db` with FTS5 search:
@@ -154,8 +154,13 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       offline degradation (`--no-combos`). *Sauron → detects Fall of Cair Andros + Blasphemous Act.*
 - [ ] Suggest color-identity-legal combos to *add* (the live "almost included" bucket already
       provides one-card-away suggestions — surface them in recommendations).
-- [ ] Interaction/ruling Q&A: combine Scryfall rulings (Phase 1) + comprehensive-rules sections +
-      combo data into a single "what happens / what governs this?" lookup.
+- [x] **Interaction/ruling Q&A** (`rules/qa.py`, `models/qa.py`): `explain_card` (oracle text +
+      official rulings + CR rules for the card's keywords + glossary + combos), `search_knowledge`
+      (free-text FTS over rules + glossary), `explain_interaction` (both cards' grounding + combos
+      between them). CLI `mtg explain "<card or question>"` and `mtg interaction "<a>" "<b>"`. The
+      engine *retrieves grounded sources*; Claude synthesizes the answer in chat. Tests in
+      `test_qa.py`. *Demo: Blasphemous Act → 4 rulings + 10 combos; the Fall of Cair Andros + Blasphemous
+      Act interaction pulls the "excess damage = above lethal" ruling + Amass rule.*
 
 ### Phase 5 — Game simulation & analytics  `[~]`
 - [x] **Hypergeometric module** (`simulation/probability.py`, scipy): exact P(≥k of a group in N
@@ -291,4 +296,8 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   builds a legal 100 from EDHREC staples ∪ owned cards (owned-first), filling category targets +
   manabase; decklist with owned/buy markers, shopping list, budget cap, `--owned-only`. Plus
   `mtg deck suggest-commanders`. 69 tests. Becomes fully owned-aware once a real collection is
-  imported. Remaining: interaction Q&A (Phase 4 finish), Phase 7 polish, web UI (publishing).
+  imported.
+- **2026-06-18** — **Interaction/rules Q&A built (Phase 4 complete).** `mtg explain "<card|question>"`
+  and `mtg interaction "<a>" "<b>"` retrieve grounded sources (card text + rulings + CR rules +
+  glossary + combos); Claude synthesizes the answer in chat. 74 tests. **Core feature set
+  (Phases 0–6) is now complete.** Remaining: Phase 7 polish (saved decks, caching) + web UI (publishing).

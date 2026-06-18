@@ -30,7 +30,9 @@ from mtg_analyzer.recommend.builder import build_deck
 from mtg_analyzer.recommend.edhrec import EdhrecClient
 from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
 from mtg_analyzer.simulation.goldfish import simulate
+from mtg_analyzer.models.qa import CardKnowledge
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
+from mtg_analyzer.rules.qa import explain_card, explain_interaction, search_knowledge
 from mtg_analyzer.rules.store import RulesStore
 
 # Minimal card-name extraction for the combos CLI (the full decklist parser is Phase 2):
@@ -89,6 +91,97 @@ def _cmd_card(args: argparse.Namespace) -> int:
             if n:
                 print(f"  ({n} ruling(s) on file)")
     finally:
+        db.close()
+    return 0
+
+
+def _print_card_knowledge(k: CardKnowledge) -> None:
+    print(f"{k.name}  —  {k.type_line}")
+    for line in k.text.splitlines():
+        print(f"  {line}")
+    if k.keywords:
+        print(f"  keywords: {', '.join(k.keywords)}")
+    for g in k.glossary:
+        print(f"\n  [glossary] {g.term}: {g.definition}")
+    for r in k.rules:
+        print(f"\n  [rule {r.number}] {r.text}")
+    if k.rulings:
+        print(f"\n  Rulings ({len(k.rulings)}):")
+        for ru in k.rulings:
+            print(f"    • ({ru.published_at}) {ru.comment}")
+    if k.combos:
+        print(f"\n  Combos involving {k.name} ({len(k.combos)}):")
+        for c in k.combos[:10]:
+            print(f"    ⚡ {c}")
+
+
+def _combo_descriptions(combos: list) -> list[str]:
+    return [f"{' + '.join(c.produces) or 'combo'} — {', '.join(u.name for u in c.uses)}"
+            for c in combos]
+
+
+def _cmd_explain(args: argparse.Namespace) -> int:
+    db = CardDatabase()
+    store = RulesStore()
+    try:
+        card = db.get_by_name(args.query)
+        if card is not None:
+            knowledge = explain_card(args.query, db, store)
+            assert knowledge is not None
+            if not args.no_combos:
+                async def fetch() -> list:
+                    try:
+                        async with CommanderSpellbookClient() as client:
+                            return await client.combos_for_card(card.name, max_results=10)
+                    except Exception:  # noqa: BLE001 — combos are best-effort
+                        return []
+                knowledge.combos = _combo_descriptions(asyncio.run(fetch()))
+            _print_card_knowledge(knowledge)
+        else:  # free-text → search the rules + glossary
+            res = search_knowledge(args.query, store)
+            if not res.rules and not res.glossary:
+                print(f"No rules or glossary entries match {args.query!r}.")
+                return 0
+            print(f"Rules matching {args.query!r}:")
+            for r in res.rules:
+                print(f"  [{r.number}] {r.text}")
+            for g in res.glossary:
+                print(f"\n  [glossary] {g.term}: {g.definition}")
+    finally:
+        store.close()
+        db.close()
+    return 0
+
+
+def _cmd_interaction(args: argparse.Namespace) -> int:
+    db = CardDatabase()
+    store = RulesStore()
+    try:
+        inter = explain_interaction(args.card_a, args.card_b, db, store)
+        if not args.no_combos and len(inter.cards) == 2:
+            async def fetch() -> list:
+                try:
+                    async with CommanderSpellbookClient() as client:
+                        result = await client.find_my_combos(main=[args.card_a, args.card_b])
+                    return result.included
+                except Exception:  # noqa: BLE001
+                    return []
+            inter.combos = _combo_descriptions(asyncio.run(fetch()))
+
+        for k in inter.cards:
+            print("=" * 4, k.name, "=" * 4)
+            _print_card_knowledge(k)
+            print()
+        if inter.combos:
+            print(f"Combo(s) formed by these cards ({len(inter.combos)}):")
+            for c in inter.combos:
+                print(f"  ⚡ {c}")
+        elif len(inter.cards) == 2 and not args.no_combos:
+            print("No known two-card combo between them (per Commander Spellbook).")
+        for note in inter.notes:
+            print(f"  • {note}")
+    finally:
+        store.close()
         db.close()
     return 0
 
@@ -523,6 +616,17 @@ def main(argv: list[str] | None = None) -> int:
     card = sub.add_parser("card", help="look up a card by name")
     card.add_argument("name")
     card.set_defaults(func=_cmd_card)
+
+    explain = sub.add_parser("explain", help="explain a card (text+rulings+rules+combos) or search rules")
+    explain.add_argument("query", help="a card name, or a free-text rules question")
+    explain.add_argument("--no-combos", action="store_true")
+    explain.set_defaults(func=_cmd_explain)
+
+    interaction = sub.add_parser("interaction", help="grounding for how two cards interact")
+    interaction.add_argument("card_a")
+    interaction.add_argument("card_b")
+    interaction.add_argument("--no-combos", action="store_true")
+    interaction.set_defaults(func=_cmd_interaction)
 
     rules = sub.add_parser("rules", help="Comprehensive Rules lookup").add_subparsers(
         dest="rules_command", required=True
