@@ -228,6 +228,13 @@ class CardDatabase:
         ).fetchone()
         return self._card_from_row(row)
 
+    def min_usd(self, oracle_id: str) -> float | None:
+        """Cheapest USD price across cached printings of a card (None if unpriced)."""
+        row = self.conn.execute(
+            "SELECT MIN(usd) FROM printings WHERE oracle_id = ? AND usd IS NOT NULL", (oracle_id,)
+        ).fetchone()
+        return float(row[0]) if row and row[0] is not None else None
+
     def get_rulings(self, oracle_id: str) -> list[Ruling]:
         rows = self.conn.execute(
             "SELECT oracle_id, source, published_at, comment FROM rulings "

@@ -24,6 +24,8 @@ from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 from mtg_analyzer.models.combo import Combo
+from mtg_analyzer.recommend.edhrec import EdhrecClient
+from mtg_analyzer.recommend.recommender import build_recommendations
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
 from mtg_analyzer.rules.store import RulesStore
 
@@ -263,6 +265,46 @@ def _cmd_deck_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_deck_recommend(args: argparse.Namespace) -> int:
+    parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
+    db = CardDatabase()
+    store = InventoryStore()
+    try:
+        deck = resolve_deck(db, parsed)
+        report = analyze(deck)
+        owned = set(store.owned_by_oracle())
+
+        async def fetch() -> list:
+            async with EdhrecClient() as client:
+                return await client.commander_cards(report.commanders)
+
+        edhrec_cards = asyncio.run(fetch())
+        recs = build_recommendations(deck, report, edhrec_cards, db, owned=owned,
+                                     budget=args.budget)
+    finally:
+        store.close()
+        db.close()
+
+    print(f"Recommendations for {recs.commander}  [{report.identity}]")
+
+    if recs.adds:
+        print(f"\nADD — fills your gaps, synergy-ranked from EDHREC ({len(recs.adds)}):")
+        for a in recs.adds:
+            price = "owned" if a.owned else (f"${a.price_usd:.2f}" if a.price_usd else "price n/a")
+            print(f"  + {a.name:30} [{price:>9}]  {a.reason}")
+
+    if recs.cuts:
+        print(f"\nCONSIDER CUTTING — lowest play-rate in {recs.commander} decks ({len(recs.cuts)}):")
+        for c in recs.cuts:
+            print(f"  − {c.name:30} {c.reason}")
+
+    print(f"\nNet: swap ~{min(len(recs.adds), len(recs.cuts))} cards (deck stays 100). "
+          f"Estimated buy cost: ${recs.buy_cost:.2f}")
+    for note in recs.notes:
+        print(f"  • {note}")
+    return 0
+
+
 def _cmd_inventory_import(args: argparse.Namespace) -> int:
     items = parse_inventory_csv(Path(args.file).read_text(encoding="utf-8"))
     db = CardDatabase()
@@ -359,6 +401,10 @@ def main(argv: list[str] | None = None) -> int:
     d_analyze = deck.add_parser("analyze", help="validate + analyze a decklist")
     d_analyze.add_argument("file")
     d_analyze.set_defaults(func=_cmd_deck_analyze)
+    d_rec = deck.add_parser("recommend", help="suggest cuts + adds (EDHREC-blended)")
+    d_rec.add_argument("file")
+    d_rec.add_argument("--budget", type=float, help="max USD to spend on not-owned adds")
+    d_rec.set_defaults(func=_cmd_deck_recommend)
 
     inv = sub.add_parser("inventory", help="card collection").add_subparsers(
         dest="inventory_command", required=True

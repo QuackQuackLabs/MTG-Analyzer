@@ -117,12 +117,15 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       (1–5) from Game-Changer + tutor density (combo-refined in Phase 4). CLI `mtg deck analyze`.
       Tests in `test_analysis.py`. *Validated on real decks: Sauron → LEGAL, bracket 4 (4 Game
       Changers); the Nazgûl/signet cases drove two real fixes.*
-- [ ] **3b — Recommendations (static, no sim):** rank candidates (see §5) to fill the biggest gaps;
-      explanations; respect color identity, singleton, banlist, budget.
-- [ ] **Recommendations (static, no sim):** rank candidate cards (see §5) to fill the biggest gaps;
-      attach explanation strings; respect color identity, singleton, banlist, budget.
-- [ ] **3b — Budget shopping list:** owned (from inventory) vs to-buy, with Scryfall `prices.usd`
-      (min across reprints) and functional cheaper-substitute suggestions.
+- [x] **3b — Recommendations (blended, no sim):** `recommend/edhrec.py` (EDHREC client, throttled,
+      resolves candidates by name) + `recommend/recommender.py`. Adds = EDHREC synergy cards
+      classified into the deck's gaps (ramp/draw/removal/wipe), respecting color identity / singleton
+      / not-in-deck / budget. Cuts = deck's lowest play-rate cards, protecting commander / Game
+      Changers / singleton-override theme cards. Buy cost + owned-aware (inventory). CLI
+      `mtg deck recommend --budget`. Tests in `test_recommender.py`. *Validated on Sauron: 8 gap-
+      filling adds (~$4.86) + 8 cut candidates; protects Sol Ring / Nazgûl / Game Changers.*
+- [~] **3b — Budget shopping list:** buy cost + owned vs not-owned via inventory done. TODO:
+      functional cheaper-substitute suggestions (same role, lower price).
 - [ ] **3c — FastAPI routes:** import/analyze deck, inventory, recommendations (thin over the engine).
 - [ ] **3d — React views:** import deck → validation report → category/curve charts → ranked
       recommendations → shopping list. Card images from Scryfall (cache locally).
@@ -246,5 +249,9 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   CSV deck parsing with auto-detection. Both parse to 100 cards, 0 unresolved.
 - **2026-06-17** — **Phase 3a complete (analysis engine).** Validation + category/curve analysis +
   bracket estimate; CLI `mtg deck analyze`. 53 tests. Real-deck validation drove two fixes: Nazgûl
-  singleton exemption (and Relentless Rats etc.) and broader ramp detection (signets). Next: **3b
-  recommender + shopping list**, then **3c API**, **3d React UI**.
+  singleton exemption (and Relentless Rats etc.) and broader ramp detection (signets).
+- **2026-06-17** — **Phase 3b complete (recommender).** Blended EDHREC + local recommender: gap-
+  filling synergy adds + lowest-play-rate cut candidates (commander/Game-Changer/theme protected),
+  buy cost, owned-aware, budget cap. CLI `mtg deck recommend`. 58 tests. Building it surfaced + fixed
+  a selection bug (general-upgrades loop dumped all candidates → suggested cutting the whole deck)
+  and added cut protections. Next: **3c FastAPI routes**, **3d React UI**.
