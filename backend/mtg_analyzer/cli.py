@@ -24,6 +24,7 @@ from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 from mtg_analyzer.models.combo import Combo
+from mtg_analyzer.models.deck import ResolvedDeck
 from mtg_analyzer.recommend.edhrec import EdhrecClient
 from mtg_analyzer.recommend.recommender import build_recommendations
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
@@ -234,7 +235,9 @@ def _cmd_deck_analyze(args: argparse.Namespace) -> int:
     parsed = parse_deck(Path(args.file).read_text(encoding="utf-8"))
     db = CardDatabase()
     try:
-        report = analyze(resolve_deck(db, parsed))
+        deck = resolve_deck(db, parsed)
+        combos = [] if args.no_combos else _find_deck_combos(deck)
+        report = analyze(deck, included_combos=combos)
     finally:
         db.close()
 
@@ -259,10 +262,31 @@ def _cmd_deck_analyze(args: argparse.Namespace) -> int:
         label = f"{b.cmc}+" if b.cmc == 7 else str(b.cmc)
         print(f"  {label:>2}  {'█' * round(b.count / peak * 24)} {b.count}")
 
+    if report.combos:
+        print(f"\nCombos present ({len(report.combos)}):")
+        for combo in report.combos:
+            print(f"  ⚡ {combo}")
+
     print(f"\nBracket estimate: {report.bracket_estimate}  — {report.bracket_rationale}")
     if report.game_changers:
         print(f"Game Changers ({len(report.game_changers)}): {', '.join(report.game_changers)}")
     return 0
+
+
+def _find_deck_combos(deck: ResolvedDeck) -> list[Combo]:
+    """Fetch combos present in a resolved deck via Commander Spellbook (gracefully empty)."""
+    main = [e.card.name for e in deck.mainboard if e.card]
+    cmds = [e.card.name for e in deck.commanders if e.card]
+
+    async def run() -> list[Combo]:
+        try:
+            async with CommanderSpellbookClient() as client:
+                result = await client.find_my_combos(main=main, commanders=cmds)
+            return result.included
+        except Exception:  # noqa: BLE001 — combo lookup is best-effort; analysis works offline
+            return []
+
+    return asyncio.run(run())
 
 
 def _cmd_deck_recommend(args: argparse.Namespace) -> int:
@@ -400,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
     d_show.set_defaults(func=_cmd_deck_show)
     d_analyze = deck.add_parser("analyze", help="validate + analyze a decklist")
     d_analyze.add_argument("file")
+    d_analyze.add_argument("--no-combos", action="store_true",
+                           help="skip the live combo lookup (offline / faster)")
     d_analyze.set_defaults(func=_cmd_deck_analyze)
     d_rec = deck.add_parser("recommend", help="suggest cuts + adds (EDHREC-blended)")
     d_rec.add_argument("file")

@@ -26,7 +26,7 @@ future item (§7), and the architecture keeps it reachable.
 | Decision | Choice | Rationale |
 |---|---|---|
 | Language / engine | **Python 3.11+** | Best fit for the data/analytics/simulation core; scipy/numpy; the data ecosystem (pyedhrec etc.) is Python. |
-| Interface | **Local web app** — FastAPI backend + **React/Vite/TS** SPA frontend | User-chosen. Natural for uploads, card images, charts, deck diffs; cleanest path to future publishing. |
+| Interface | **Chat-driven via Claude Code (primary)** — the engine is exercised through chat; Claude runs commands + interprets. **Web app (FastAPI + React) deferred** to the publishing phase (§7). | Updated 2026-06-17: user prefers chat over terminal/UI for personal use. Engine stays UI-agnostic so a web app can be added later for publishing. |
 | First milestone | **Deck analysis + recommendations** (no simulator required) | User-chosen. Highest value per effort; works day one. |
 | Card data | **Scryfall bulk data** ingested into local **SQLite**, keyed on `oracle_id`; live API only for autocomplete/fuzzy/ad-hoc search | Scryfall is the sanctioned, documented source; bulk is the right tool for inventory-scale work. |
 | Simulation fidelity | **Statistical / heuristic goldfishing** (hypergeometric + Monte-Carlo). **No full rules engine.** | MTG is Turing-complete; a faithful engine is multi-year. Full rules-enforced play deferred to future (reuse XMage, MIT) — §7. |
@@ -126,9 +126,9 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       filling adds (~$4.86) + 8 cut candidates; protects Sol Ring / Nazgûl / Game Changers.*
 - [~] **3b — Budget shopping list:** buy cost + owned vs not-owned via inventory done. TODO:
       functional cheaper-substitute suggestions (same role, lower price).
-- [ ] **3c — FastAPI routes:** import/analyze deck, inventory, recommendations (thin over the engine).
-- [ ] **3d — React views:** import deck → validation report → category/curve charts → ranked
-      recommendations → shopping list. Card images from Scryfall (cache locally).
+- [~] **3c/3d — Web app (FastAPI routes + React views): DEFERRED to publishing (§7).** Primary
+      interface is now chat-driven. Keep the engine UI-agnostic so these can be added later. The
+      existing `/health` FastAPI app + Vite scaffold remain as the seed.
 
 ### Phase 4 — Combo & interaction detection  `[~]`
 - [x] **Comprehensive Rules corpus (pulled forward).** `rules/comprehensive.py` auto-discovers the
@@ -149,8 +149,11 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       `find_in_deck` (uses-based; template combos confirmed via the live endpoint). CLI
       `mtg combos card|find`. Tests in `test_combos.py` (incl. a regression for a pagination
       infinite-loop bug where an empty `params={}` stripped the `next` URL's query).
-- [ ] Surface combos/missing-pieces in the deck-analysis UI; suggest color-identity-legal combos to *add*
-      (the live "almost included" bucket already provides one-card-away suggestions).
+- [x] **Combos wired into deck analysis:** `mtg deck analyze` calls find-my-combos and lists combos
+      present; the bracket estimate now factors combo count (a two-card combo → bracket 3+). Graceful
+      offline degradation (`--no-combos`). *Sauron → detects Fall of Cair Andros + Blasphemous Act.*
+- [ ] Suggest color-identity-legal combos to *add* (the live "almost included" bucket already
+      provides one-card-away suggestions — surface them in recommendations).
 - [ ] Interaction/ruling Q&A: combine Scryfall rulings (Phase 1) + comprehensive-rules sections +
       combo data into a single "what happens / what governs this?" lookup.
 

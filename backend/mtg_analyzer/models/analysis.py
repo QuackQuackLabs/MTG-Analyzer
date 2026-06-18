@@ -33,5 +33,6 @@ class DeckReport(BaseModel):
     categories: list[CategoryCount]
     curve: list[CurveBucket]
     game_changers: list[str]
-    bracket_estimate: int  # 1–5 (approximate; refined by combo data in Phase 4)
+    combos: list[str]  # combos present in the deck (e.g. "Infinite mana — A + B")
+    bracket_estimate: int  # 1–5
     bracket_rationale: str

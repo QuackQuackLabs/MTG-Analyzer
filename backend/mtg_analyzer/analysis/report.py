@@ -20,6 +20,7 @@ from mtg_analyzer.analysis.categorize import (
     categorize,
 )
 from mtg_analyzer.models.analysis import CategoryCount, CurveBucket, DeckReport, Validation
+from mtg_analyzer.models.combo import Combo
 from mtg_analyzer.models.deck import ResolvedDeck, ResolvedEntry
 
 # Command Zone–style targets (see commander-format skill). Tutor/counter are informational.
@@ -55,7 +56,8 @@ def _is_legal_commander(entry: ResolvedEntry) -> bool:
         and card.commander_legality() != "banned"
 
 
-def analyze(deck: ResolvedDeck) -> DeckReport:
+def analyze(deck: ResolvedDeck, included_combos: list[Combo] | None = None) -> DeckReport:
+    included_combos = included_combos or []
     commanders = deck.commanders
     main = deck.mainboard
     identity_set: set[str] = set()
@@ -90,7 +92,11 @@ def analyze(deck: ResolvedDeck) -> DeckReport:
     game_changers = sorted(
         e.card.name for e in (commanders + main) if e.card and e.card.game_changer
     )
-    bracket, rationale = _estimate_bracket(len(game_changers), counts[TUTOR])
+    combos = [
+        f"{' + '.join(c.produces) or 'combo'} — {', '.join(u.name for u in c.uses)}"
+        for c in included_combos
+    ]
+    bracket, rationale = _estimate_bracket(len(game_changers), counts[TUTOR], len(included_combos))
 
     return DeckReport(
         name=deck.name,
@@ -106,6 +112,7 @@ def analyze(deck: ResolvedDeck) -> DeckReport:
         categories=categories,
         curve=curve,
         game_changers=game_changers,
+        combos=combos,
         bracket_estimate=bracket,
         bracket_rationale=rationale,
     )
@@ -160,13 +167,19 @@ def _validate(
     return issues, warnings
 
 
-def _estimate_bracket(game_changers: int, tutors: int) -> tuple[int, str]:
-    """Rough 1–5 bracket. Refined by combo detection in Phase 4."""
-    if game_changers >= 4:
-        return 4, f"{game_changers} Game Changers (bracket 4+ allows unrestricted Game Changers)."
+def _estimate_bracket(game_changers: int, tutors: int, combos: int) -> tuple[int, str]:
+    """Rough 1–5 bracket from Game Changers, two-card combos, and tutor density.
+
+    Brackets 1–2 disallow Game Changers and early two-card "win" combos; bracket 3
+    allows ≤3 Game Changers and combos; bracket 4+ is unrestricted.
+    """
+    if game_changers >= 4 or combos >= 2 or (combos >= 1 and game_changers >= 1):
+        return 4, (f"{game_changers} Game Changer(s) + {combos} combo(s) — high-power "
+                   "(bracket 4+, unrestricted).")
+    if combos >= 1:
+        return 3, f"{combos} two-card combo(s) present — at least bracket 3."
     if game_changers >= 1:
         return 3, f"{game_changers} Game Changer(s) (bracket 3 allows up to 3)."
     if tutors >= 4:
         return 3, f"No Game Changers but {tutors} tutors — tuned consistency suggests bracket 3."
-    return 2, "No Game Changers and few tutors — around precon/Core (bracket 2). Approximate; " \
-              "combo detection (Phase 4) will refine this."
+    return 2, "No Game Changers, combos, or heavy tutoring — around precon/Core (bracket 2)."
