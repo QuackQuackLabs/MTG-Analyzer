@@ -405,7 +405,9 @@ def _cmd_deck_recommend(args: argparse.Namespace) -> int:
     cache = EdhrecCache()
     try:
         deck = resolve_deck(db, parsed)
-        report = analyze(deck)
+        combos = _find_deck_combos(deck)  # best-effort; used to protect combo pieces from cuts
+        report = analyze(deck, included_combos=combos)
+        protected = {u.name for c in combos for u in c.uses if u.name}
         owned = set(store.owned_by_oracle())
 
         async def fetch() -> list:
@@ -415,7 +417,7 @@ def _cmd_deck_recommend(args: argparse.Namespace) -> int:
         edhrec_cards = asyncio.run(fetch())
         before = None if args.no_sim else simulate(deck, games=args.games, seed=1)
         recs = build_recommendations(deck, report, edhrec_cards, db, owned=owned,
-                                     budget=args.budget, sim=before)
+                                     budget=args.budget, sim=before, protected=protected)
         after = None if args.no_sim else simulate(apply_swaps(deck, recs, db),
                                                   games=args.games, seed=1)
     finally:

@@ -108,6 +108,15 @@ def test_sim_slow_commander_prioritizes_ramp(db: CardDatabase) -> None:
     assert any("prioritizing ramp" in n for n in recs.notes)  # lateness 4 -> boost + note
 
 
+def test_combo_pieces_protected_from_cuts(db: CardDatabase) -> None:
+    # "Filler" would normally be a cut candidate; protecting it (as a combo piece) excludes it.
+    deck = _deck()  # commander + game_changer "Bomb" + "Filler"
+    edhrec = [EdhrecCard(name="Sol Ring", synergy=0.3, inclusion=80, potential_decks=100)]
+    recs = build_recommendations(deck, analyze(deck), edhrec, db, protected={"Filler"})
+    assert "Filler" not in {c.name for c in recs.cuts}
+    assert any("combo piece" in n for n in recs.notes)
+
+
 def test_apply_swaps_removes_cut_and_inserts_add(db: CardDatabase) -> None:
     deck = _deck()
     edhrec = [EdhrecCard(name="Sol Ring", synergy=0.3, inclusion=80, potential_decks=100)]

@@ -36,8 +36,10 @@ def build_recommendations(
     owned: set[str] | None = None,
     budget: float | None = None,
     sim: SimResult | None = None,
+    protected: set[str] | None = None,
 ) -> Recommendations:
     owned = owned or set()
+    protected = {p.lower() for p in (protected or set())}
     notes: list[str] = []
     ramp_boost = _consistency_ramp_boost(sim, report, notes)
 
@@ -116,7 +118,9 @@ def build_recommendations(
     if budget is not None:
         adds = _fit_budget(adds, budget, notes)
 
-    cuts = _pick_cuts(deck, edhrec_by_name, n=len(adds))
+    cuts = _pick_cuts(deck, edhrec_by_name, n=len(adds), protected=protected)
+    if protected:
+        notes.append(f"Protected {len(protected)} combo piece(s) from cut suggestions.")
     buy_cost = round(sum(a.price_usd or 0.0 for a in adds if not a.owned), 2)
     if not owned:
         notes.append("Import your collection (`mtg inventory import`) for owned-aware suggestions "
@@ -181,16 +185,21 @@ def _fit_budget(adds: list[AddSuggestion], budget: float, notes: list[str]) -> l
 
 
 def _pick_cuts(
-    deck: ResolvedDeck, edhrec_by_name: dict[str, EdhrecCard], n: int
+    deck: ResolvedDeck, edhrec_by_name: dict[str, EdhrecCard], n: int, protected: set[str]
 ) -> list[CutSuggestion]:
-    """The n nonland deck cards least played in this commander's EDHREC decks."""
+    """The n nonland deck cards least played in this commander's EDHREC decks.
+
+    Never suggests cutting: lands, Game Changers, singleton-override cards (Nazgûl etc.),
+    or combo pieces (cards used by a combo present in the deck).
+    """
     scored: list[tuple[float, CutSuggestion]] = []
     for e in deck.mainboard:
         card = e.card
         if card is None or "land" in (card.type_line or "").lower():
             continue
-        # Protect bracket-defining and intentional-theme cards from cut suggestions.
         if card.game_changer or _SINGLETON_OVERRIDE_RE.search(card.get_oracle_text().lower()):
+            continue
+        if card.name.lower() in protected:  # combo piece — cutting it would break the combo
             continue
         ec = edhrec_by_name.get(card.name.lower())
         rate = ec.inclusion_rate if ec else None

@@ -125,7 +125,9 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       resolves candidates by name) + `recommend/recommender.py`. Adds = EDHREC synergy cards
       classified into the deck's gaps (ramp/draw/removal/wipe), respecting color identity / singleton
       / not-in-deck / budget. Cuts = deck's lowest play-rate cards, protecting commander / Game
-      Changers / singleton-override theme cards. Buy cost + owned-aware (inventory). CLI
+      Changers / singleton-override theme cards / **combo pieces** (cards used by a combo present in
+      the deck — `recommend` fetches the deck's combos and passes them as protected). Buy cost +
+      owned-aware (inventory). CLI
       `mtg deck recommend --budget`. Tests in `test_recommender.py`. *Validated on Sauron: 8 gap-
       filling adds (~$4.86) + 8 cut candidates; protects Sol Ring / Nazgûl / Game Changers.*
 - [~] **3b — Budget shopping list:** buy cost + owned vs not-owned via inventory done. TODO:
