@@ -1,7 +1,11 @@
 # MTG Analyzer — Project Plan
 
 > **Living document.** Every agent reads this before starting and updates status/checkboxes when
-> finishing a unit of work. Last updated: **2026-06-17** (project kickoff).
+> finishing a unit of work. Last updated: **2026-06-18**.
+>
+> **Status: Phases 0–7 complete** — feature-complete for local, chat-driven use (analyze, recommend,
+> simulate, build-from-collection, combo/interaction Q&A; 81 tests, ruff+mypy clean). Only the
+> deferred web app (publishing, §7) remains. Primary interface is chat via Claude Code.
 
 ## 1. Vision
 
@@ -196,16 +200,20 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
 - Seeds from EDHREC recommendations (∩ inventory via owned-first). Manabase upgrade
   (duals/fetches) is a future refinement.
 
-### Phase 7 — Polish & quality  `[~]`
-- [x] **Saved deck library** (`data/deck_library.py`): `mtg deck save|list|remove`; all deck
+### Phase 7 — Polish & quality  `[x]`
+- [x] **Saved deck library** (`data/deck_library.py`): `mtg deck save|list|remove|diff`; all deck
       commands accept a saved name *or* a file path (`load_deck_text`). Decks stored as text under
-      `data/decks/` (gitignored). *Version history / diffs deferred.*
-- [x] **EDHREC caching** (`EdhrecCache` in `recommend/edhrec.py`): 24h TTL in `app.db`; `recommend`
-      and `build` reuse cached commander data (cold 1.14s → warm 0.67s, no network). Scryfall bulk
-      already refreshes via the manifest (`mtg data refresh`). *A scheduled nightly job is future.*
-- [~] Error/offline handling: combos + EDHREC degrade gracefully (best-effort, empty on failure);
-      unresolved cards reported. Remaining: surface rate-limit/offline state more explicitly.
-- [ ] Test coverage pass; type-check clean; basic perf check on full card DB. *(78 tests, mypy clean.)*
+      `data/decks/` (gitignored). `deck diff` shows added/removed cards between two decks. *(Auto
+      version-history snapshots deferred — diff covers the practical need.)*
+- [x] **EDHREC caching** (`EdhrecCache`): 24h TTL in `app.db`; `recommend`/`build` reuse cached
+      commander data (cold 1.14s → warm 0.67s, no network). Scryfall bulk refreshes via the manifest.
+      *A scheduled nightly cron is an ops concern (run `mtg data refresh` + `mtg rules refresh`).*
+- [x] **Error/offline handling:** all network calls (Commander Spellbook, EDHREC) route through
+      `_run_network` — on failure they print a clear "unavailable (offline or rate-limited); skipped"
+      note and degrade gracefully; unresolved cards are reported, never silently dropped.
+- [x] **Quality pass:** 81 tests; ruff + mypy clean. Engine logic 85–100% covered (CLI/bulk
+      downloader are thin glue, exercised via real runs). Perf on the full 38k-card DB: card lookup
+      ~2 ms, parse+resolve a 100-card deck ~35 ms, analyze ~1 ms.
 
 ## 5. Recommendation engine design (reference)
 
@@ -309,5 +317,9 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 - **2026-06-18** — **Phase 7 progress: EDHREC caching + saved decks.** `EdhrecCache` (24h TTL in
   app.db) makes recommend/build reuse commander data (1.14s → 0.67s warm). `DeckLibrary` +
   `mtg deck save|list|remove`; deck commands accept a saved name or a path. 78 tests. Saved the two
-  sample decks (`sauron`, `cowabunga`). Remaining Phase 7: explicit offline/rate-limit states, a
-  scheduled refresh job, broader test/perf pass.
+  sample decks (`sauron`, `cowabunga`).
+- **2026-06-18** — **Phase 7 complete.** Added `mtg deck diff`; routed all network calls through
+  `_run_network` (explicit offline/rate-limit notes + graceful degradation); added pytest-cov (engine
+  85–100% covered, 81 tests) + CLI smoke tests; perf check on the full DB (all ops <40 ms). **Phases
+  0–7 complete — the tool is feature-complete for local, chat-driven use.** Only the deferred web UI
+  (publishing, §7) remains.

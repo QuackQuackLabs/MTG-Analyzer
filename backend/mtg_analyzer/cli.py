@@ -11,7 +11,9 @@ import argparse
 import asyncio
 import re
 import sys
+from collections.abc import Callable, Coroutine
 from pathlib import Path
+from typing import Any, TypeVar
 
 from mtg_analyzer import config
 from mtg_analyzer.combos.client import CommanderSpellbookClient
@@ -25,7 +27,7 @@ from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 from mtg_analyzer.models.card import Card
-from mtg_analyzer.models.combo import Combo
+from mtg_analyzer.models.combo import Combo, DeckCombos
 from mtg_analyzer.models.deck import ResolvedDeck
 from mtg_analyzer.recommend.builder import build_deck
 from mtg_analyzer.recommend.edhrec import EdhrecCache, EdhrecClient
@@ -40,6 +42,7 @@ from mtg_analyzer.rules.store import RulesStore
 # strips a leading quantity and a trailing "(SET) 123" printing suffix.
 _DECK_LINE_RE = re.compile(r"^\s*(?:\d+x?\s+)?(.+?)(?:\s+\([0-9A-Za-z]+\)\s+\S+)?\s*$")
 _SECTION_HEADERS = {"deck", "commander", "sideboard", "companion", "maybeboard"}
+T = TypeVar("T")
 
 
 def _cmd_data_refresh(args: argparse.Namespace) -> int:
@@ -121,6 +124,16 @@ def _combo_descriptions(combos: list) -> list[str]:
             for c in combos]
 
 
+def _run_network(make_coro: Callable[[], Coroutine[Any, Any, T]], default: T, label: str) -> T:
+    """Run a best-effort network coroutine; on failure surface a clear note + return default."""
+    try:
+        return asyncio.run(make_coro())
+    except Exception as e:  # noqa: BLE001 — network is best-effort; tool works offline
+        print(f"  ! {label} unavailable — {type(e).__name__} (offline or rate-limited); skipped.",
+              file=sys.stderr)
+        return default
+
+
 def _cmd_explain(args: argparse.Namespace) -> int:
     db = CardDatabase()
     store = RulesStore()
@@ -131,12 +144,9 @@ def _cmd_explain(args: argparse.Namespace) -> int:
             assert knowledge is not None
             if not args.no_combos:
                 async def fetch() -> list:
-                    try:
-                        async with CommanderSpellbookClient() as client:
-                            return await client.combos_for_card(card.name, max_results=10)
-                    except Exception:  # noqa: BLE001 — combos are best-effort
-                        return []
-                knowledge.combos = _combo_descriptions(asyncio.run(fetch()))
+                    async with CommanderSpellbookClient() as client:
+                        return await client.combos_for_card(card.name, max_results=10)
+                knowledge.combos = _combo_descriptions(_run_network(fetch, [], "Combo lookup"))
             _print_card_knowledge(knowledge)
         else:  # free-text → search the rules + glossary
             res = search_knowledge(args.query, store)
@@ -162,13 +172,10 @@ def _cmd_interaction(args: argparse.Namespace) -> int:
         raw_combos: list = []
         if not args.no_combos and len(inter.cards) == 2:
             async def fetch() -> list:
-                try:
-                    async with CommanderSpellbookClient() as client:
-                        result = await client.find_my_combos(main=[args.card_a, args.card_b])
-                    return result.included
-                except Exception:  # noqa: BLE001
-                    return []
-            raw_combos = asyncio.run(fetch())
+                async with CommanderSpellbookClient() as client:
+                    result = await client.find_my_combos(main=[args.card_a, args.card_b])
+                return result.included
+            raw_combos = _run_network(fetch, [], "Combo lookup")
 
         for k in inter.cards:
             print("=" * 4, k.name, "=" * 4)
@@ -262,7 +269,7 @@ def _cmd_combos_card(args: argparse.Namespace) -> int:
             async with CommanderSpellbookClient() as client:
                 return await client.combos_for_card(name, max_results=args.limit)
 
-        combos = asyncio.run(fetch())  # live, single filtered query
+        combos: list[Combo] = _run_network(fetch, [], "Commander Spellbook")  # live query
         store.add(combos)  # cache for offline reuse
         if not combos:
             print(f"No combos found that use {name}.")
@@ -297,18 +304,20 @@ def _cmd_combos_find(args: argparse.Namespace) -> int:
         print("No card names found in file.", file=sys.stderr)
         return 1
 
-    async def run() -> None:
+    async def run() -> DeckCombos | None:
         async with CommanderSpellbookClient() as client:
-            result = await client.find_my_combos(main=names)
-        print(f"Deck identity: {result.identity or 'C'}  ({len(names)} cards)")
-        print(f"\nComplete combos in deck: {len(result.included)}")
-        for c in result.included[:args.limit]:
-            print(f"  [{c.id}] {' + '.join(c.produces)}  — {', '.join(u.name for u in c.uses)}")
-        print(f"\nOne card away: {len(result.almost_included)}")
-        for c in result.almost_included[:args.limit]:
-            print(f"  [{c.id}] {' + '.join(c.produces)}")
+            return await client.find_my_combos(main=names)
 
-    asyncio.run(run())
+    result = _run_network(run, None, "Commander Spellbook")
+    if result is None:
+        return 1
+    print(f"Deck identity: {result.identity or 'C'}  ({len(names)} cards)")
+    print(f"\nComplete combos in deck: {len(result.included)}")
+    for c in result.included[:args.limit]:
+        print(f"  [{c.id}] {' + '.join(c.produces)}  — {', '.join(u.name for u in c.uses)}")
+    print(f"\nOne card away: {len(result.almost_included)}")
+    for c in result.almost_included[:args.limit]:
+        print(f"  [{c.id}] {' + '.join(c.produces)}")
     return 0
 
 
@@ -382,14 +391,11 @@ def _find_deck_combos(deck: ResolvedDeck) -> list[Combo]:
     cmds = [e.card.name for e in deck.commanders if e.card]
 
     async def run() -> list[Combo]:
-        try:
-            async with CommanderSpellbookClient() as client:
-                result = await client.find_my_combos(main=main, commanders=cmds)
-            return result.included
-        except Exception:  # noqa: BLE001 — combo lookup is best-effort; analysis works offline
-            return []
+        async with CommanderSpellbookClient() as client:
+            result = await client.find_my_combos(main=main, commanders=cmds)
+        return result.included
 
-    return asyncio.run(run())
+    return _run_network(run, [], "Combo detection")
 
 
 def _cmd_deck_recommend(args: argparse.Namespace) -> int:
@@ -489,6 +495,32 @@ def _cmd_deck_simulate(args: argparse.Namespace) -> int:
     for note in r.notes:
         print(f"  • {note}")
     print("\n(Approximate mana model: single mana pool, no colored-mana requirements.)")
+    return 0
+
+
+def _cmd_deck_diff(args: argparse.Namespace) -> int:
+    def counts(arg: str) -> dict[str, int]:
+        parsed = parse_deck(load_deck_text(arg))
+        c: dict[str, int] = {}
+        for e in parsed.entries:
+            if e.section in ("commander", "main"):
+                c[e.name] = c.get(e.name, 0) + e.quantity
+        return c
+
+    a, b = counts(args.deck_a), counts(args.deck_b)
+    added = {n: b[n] - a.get(n, 0) for n in b if b[n] > a.get(n, 0)}
+    removed = {n: a[n] - b.get(n, 0) for n in a if a[n] > b.get(n, 0)}
+
+    print(f"Diff: {args.deck_a} → {args.deck_b}")
+    if not added and not removed:
+        print("  (identical decklists)")
+        return 0
+    print(f"\nAdded ({sum(added.values())}):")
+    for n in sorted(added):
+        print(f"  + {f'{added[n]}x ' if added[n] > 1 else ''}{n}")
+    print(f"\nRemoved ({sum(removed.values())}):")
+    for n in sorted(removed):
+        print(f"  − {f'{removed[n]}x ' if removed[n] > 1 else ''}{n}")
     return 0
 
 
@@ -706,6 +738,10 @@ def main(argv: list[str] | None = None) -> int:
     d_remove = deck.add_parser("remove", help="delete a saved deck")
     d_remove.add_argument("name")
     d_remove.set_defaults(func=_cmd_deck_remove)
+    d_diff = deck.add_parser("diff", help="compare two decks (added/removed cards)")
+    d_diff.add_argument("deck_a", help="deck file or saved name")
+    d_diff.add_argument("deck_b", help="deck file or saved name")
+    d_diff.set_defaults(func=_cmd_deck_diff)
     d_show = deck.add_parser("show", help="parse + resolve a deck (file or saved name)")
     d_show.add_argument("file", help="deck file path or saved deck name")
     d_show.set_defaults(func=_cmd_deck_show)
