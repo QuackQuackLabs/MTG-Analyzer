@@ -15,6 +15,21 @@ from mtg_analyzer.models.inventory import InventoryItem
 _FOIL_TRUE = {"foil", "etched", "true", "yes", "1"}
 
 
+def fix_mojibake(text: str) -> str:
+    """Repair UTF-8-decoded-as-Latin-1 mojibake (e.g. 'Khazad-dÃ»m' → 'Khazad-dûm').
+
+    Returns the original string when it isn't double-encoded (so correct text and plain
+    ASCII pass through unchanged).
+    """
+    if text.isascii():
+        return text
+    try:
+        repaired = text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+    return repaired if "Ã" not in repaired and "â€" not in repaired else text
+
+
 def parse_inventory_csv(text: str) -> list[InventoryItem]:
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
@@ -36,6 +51,7 @@ def parse_inventory_csv(text: str) -> list[InventoryItem]:
         name = col(row, "name")
         if not name:
             continue
+        name = fix_mojibake(name)
         qty_raw = col(row, "quantity", "count", "qty")
         items.append(
             InventoryItem(

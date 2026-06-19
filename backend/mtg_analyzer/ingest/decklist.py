@@ -15,6 +15,7 @@ import csv
 import io
 import re
 
+from mtg_analyzer.ingest.inventory import fix_mojibake
 from mtg_analyzer.models.deck import DeckEntry, ParsedDeck
 
 _HEADER_TO_SECTION = {
@@ -85,7 +86,7 @@ def parse_decklist(text: str) -> ParsedDeck:
             rest = rest[: sm.start()].strip()
             saw_set = True
 
-        name = rest
+        name = fix_mojibake(rest)
         if not name:
             continue
 
@@ -150,7 +151,7 @@ def parse_archidekt_csv(text: str) -> ParsedDeck:
             section = "main"
         entries.append(DeckEntry(
             quantity=int(row[_COL["qty"]]),
-            name=row[_COL["name"]].strip(),
+            name=fix_mojibake(row[_COL["name"]].strip()),
             set_code=row[_COL["set"]].strip() or None,
             collector_number=row[_COL["collector"]].strip() or None,
             section=section,

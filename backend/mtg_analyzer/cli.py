@@ -632,7 +632,9 @@ def _cmd_deck_suggest_commanders(args: argparse.Namespace) -> int:
 
 
 def _cmd_inventory_import(args: argparse.Namespace) -> int:
-    items = parse_inventory_csv(Path(args.file).read_text(encoding="utf-8"))
+    items = []
+    for path in args.files:
+        items.extend(parse_inventory_csv(Path(path).read_text(encoding="utf-8")))
     db = CardDatabase()
     try:
         inventory = resolve_inventory(db, items)
@@ -775,8 +777,8 @@ def main(argv: list[str] | None = None) -> int:
     inv = sub.add_parser("inventory", help="card collection").add_subparsers(
         dest="inventory_command", required=True
     )
-    i_import = inv.add_parser("import", help="import a collection CSV (e.g. ManaBox)")
-    i_import.add_argument("file")
+    i_import = inv.add_parser("import", help="import collection CSV(s) (e.g. ManaBox)")
+    i_import.add_argument("files", nargs="+", help="one or more collection CSV files")
     i_import.set_defaults(func=_cmd_inventory_import)
     i_show = inv.add_parser("show", help="inventory stats, or owned count for --card")
     i_show.add_argument("--card", help="show owned count + printings for this card")

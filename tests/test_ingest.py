@@ -10,7 +10,7 @@ from mtg_analyzer.ingest.decklist import (
     parse_deck,
     parse_decklist,
 )
-from mtg_analyzer.ingest.inventory import parse_inventory_csv
+from mtg_analyzer.ingest.inventory import fix_mojibake, parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -92,6 +92,13 @@ def test_resolve_deck_attaches_cards_and_flags_unresolved(db: CardDatabase) -> N
 
 
 # --- inventory parsing -----------------------------------------------------
+def test_fix_mojibake() -> None:
+    assert fix_mojibake("Troll of Khazad-dÃ»m") == "Troll of Khazad-dûm"
+    assert fix_mojibake("Ãomer of the Riddermark").endswith("omer of the Riddermark")
+    assert fix_mojibake("Sol Ring") == "Sol Ring"  # ASCII untouched
+    assert fix_mojibake("Éowyn, Lady of Rohan") == "Éowyn, Lady of Rohan"  # correct text preserved
+
+
 def test_parse_manabox_csv() -> None:
     items = parse_inventory_csv((FIXTURES / "inventory_manabox.csv").read_text())
     assert len(items) == 3
