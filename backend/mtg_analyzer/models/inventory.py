@@ -13,6 +13,9 @@ from collections import defaultdict
 from pydantic import BaseModel
 
 
+AVAILABLE = "Available"  # location for loose cards not committed to a deck
+
+
 class InventoryItem(BaseModel):
     name: str
     quantity: int = 1
@@ -24,6 +27,7 @@ class InventoryItem(BaseModel):
     scryfall_id: str | None = None
     purchase_price: float | None = None
     oracle_id: str | None = None  # filled in by resolution
+    location: str = AVAILABLE  # "Available" or a deck slug it's committed to
 
 
 class Inventory(BaseModel):

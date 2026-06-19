@@ -18,11 +18,13 @@ from typing import Any, TypeVar
 from mtg_analyzer import config
 from mtg_analyzer.combos.client import CommanderSpellbookClient
 from mtg_analyzer.combos.store import ComboStore
-from mtg_analyzer.data.bulk import BulkDataManager
-from mtg_analyzer.data.db import CardDatabase
-from mtg_analyzer.data.deck_library import DeckLibrary, load_deck_text
-from mtg_analyzer.data.inventory_store import InventoryStore
+from mtg_analyzer.analysis.guide import build_guide
 from mtg_analyzer.analysis.report import analyze
+from mtg_analyzer.data.bulk import BulkDataManager
+from mtg_analyzer.data.collection import export_csv, sync_decks
+from mtg_analyzer.data.db import CardDatabase
+from mtg_analyzer.data.deck_library import DeckLibrary, load_deck_text, slugify
+from mtg_analyzer.data.inventory_store import InventoryStore
 from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
@@ -408,7 +410,9 @@ def _cmd_deck_recommend(args: argparse.Namespace) -> int:
         combos = _find_deck_combos(deck)  # best-effort; used to protect combo pieces from cuts
         report = analyze(deck, included_combos=combos)
         protected = {u.name for c in combos for u in c.uses if u.name}
-        owned = set(store.owned_by_oracle())
+        # Only cards Available (not committed to another deck) + this deck's own cards.
+        slug = slugify(args.file) if DeckLibrary().get(args.file) else None
+        owned = store.available_oracles(for_deck=slug)
 
         async def fetch() -> list:
             async with EdhrecClient(cache=cache) as client:
@@ -529,7 +533,49 @@ def _cmd_deck_diff(args: argparse.Namespace) -> int:
 def _cmd_deck_save(args: argparse.Namespace) -> int:
     text = Path(args.file).read_text(encoding="utf-8")
     slug = DeckLibrary().save(args.name, text)
-    print(f"Saved deck as {slug!r}. Use it by name, e.g. `mtg deck analyze {slug}`.")
+    db = CardDatabase()
+    store = InventoryStore()
+    try:
+        sync_decks(DeckLibrary(), db, store)  # the deck's cards now appear in inventory
+        export_csv(store)
+    finally:
+        store.close()
+        db.close()
+    print(f"Saved deck as {slug!r} and synced its cards into the inventory. "
+          f"Use it by name, e.g. `mtg deck analyze {slug}`.")
+    return 0
+
+
+def _cmd_deck_guide(args: argparse.Namespace) -> int:
+    library = DeckLibrary()
+    names = library.names() if args.all else [args.name]
+    if not names or (not args.all and args.name is None):
+        print("Specify a deck name or --all.", file=sys.stderr)
+        return 1
+    guides_dir = config.DATA_DIR / "guides"
+    guides_dir.mkdir(parents=True, exist_ok=True)
+    db = CardDatabase()
+    cache = EdhrecCache()
+    try:
+        for name in names:
+            deck = resolve_deck(db, parse_deck(load_deck_text(name)))
+            deck.name = name  # title the guide after the saved deck
+            combos = _find_deck_combos(deck)
+            report = analyze(deck, included_combos=combos)
+            sim = simulate(deck, games=args.games)
+
+            async def fetch() -> list:
+                async with EdhrecClient(cache=cache) as client:
+                    return await client.commander_cards(report.commanders)
+
+            edhrec: list = _run_network(fetch, [], "EDHREC")
+            md = build_guide(deck, report, sim, combos, edhrec)
+            path = guides_dir / f"{slugify(name)}.md"
+            path.write_text(md, encoding="utf-8")
+            print(f"Wrote {path}")
+    finally:
+        cache.close()
+        db.close()
     return 0
 
 
@@ -570,7 +616,7 @@ def _cmd_deck_build(args: argparse.Namespace) -> int:
         if not _is_legal_commander_card(commander):
             print(f"{commander.name} isn't a legal commander.", file=sys.stderr)
             return 1
-        owned = set(store.owned_by_oracle())
+        owned = store.available_oracles()  # new deck → only loose/Available cards
 
         async def fetch() -> list:
             async with EdhrecClient(cache=cache) as client:
@@ -636,19 +682,34 @@ def _cmd_inventory_import(args: argparse.Namespace) -> int:
     for path in args.files:
         items.extend(parse_inventory_csv(Path(path).read_text(encoding="utf-8")))
     db = CardDatabase()
-    try:
-        inventory = resolve_inventory(db, items)
-    finally:
-        db.close()
     store = InventoryStore()
     try:
-        rows = store.replace(inventory)
+        inventory = resolve_inventory(db, items)  # these are the loose "Available" pool
+        store.set_available(inventory.items)
+        deck_counts = sync_decks(DeckLibrary(), db, store)  # merge registered decks
+        csv_path = export_csv(store)
     finally:
         store.close()
-    print(f"Imported {rows:,} rows: {inventory.distinct_cards:,} distinct cards, "
-          f"{inventory.total_quantity:,} total. Unresolved: {len(inventory.unresolved)}")
+        db.close()
+    print(f"Imported {len(items):,} loose rows ({inventory.distinct_cards:,} distinct). "
+          f"Unresolved: {len(inventory.unresolved)}")
+    print(f"Synced {len(deck_counts)} registered deck(s): {', '.join(deck_counts) or '(none)'}")
+    print(f"Unified inventory written to {csv_path}")
     for item in inventory.unresolved[:10]:
         print(f"  ? {item.name} ({item.set_code} {item.collector_number})")
+    return 0
+
+
+def _cmd_inventory_sync(_: argparse.Namespace) -> int:
+    db = CardDatabase()
+    store = InventoryStore()
+    try:
+        deck_counts = sync_decks(DeckLibrary(), db, store)
+        csv_path = export_csv(store)
+    finally:
+        store.close()
+        db.close()
+    print(f"Synced {len(deck_counts)} deck(s) into inventory → {csv_path}")
     return 0
 
 
@@ -661,13 +722,16 @@ def _cmd_inventory_show(args: argparse.Namespace) -> int:
             if card is None or not card.oracle_id:
                 print(f"No card found matching {args.card!r}.", file=sys.stderr)
                 return 1
+            locs = store.locations(card.oracle_id)
             print(f"{card.name}: owned {store.owned(card.oracle_id)}")
-            for p in store.printings_for(card.oracle_id):
-                foil = " foil" if p.foil else ""
-                print(f"  {p.set_code} #{p.collector_number}{foil} x{p.quantity}")
+            for loc, qty in sorted(locs.items()):
+                tag = "(available)" if loc == "Available" else f"(in deck: {loc})"
+                print(f"  x{qty} {tag}")
         else:
-            print(f"Inventory: {store.distinct_cards():,} distinct cards, "
-                  f"{store.total_quantity():,} total copies")
+            avail = store.total_quantity("Available")
+            total = store.total_quantity()
+            print(f"Inventory: {store.distinct_cards():,} distinct cards, {total:,} total copies")
+            print(f"  available (loose): {avail:,}   ·   committed to decks: {total - avail:,}")
     finally:
         db.close()
         store.close()
@@ -746,6 +810,11 @@ def main(argv: list[str] | None = None) -> int:
     d_diff.add_argument("deck_a", help="deck file or saved name")
     d_diff.add_argument("deck_b", help="deck file or saved name")
     d_diff.set_defaults(func=_cmd_deck_diff)
+    d_guide = deck.add_parser("guide", help="compose a pilot's strategy guide (markdown)")
+    d_guide.add_argument("name", nargs="?", help="saved deck name or file (or use --all)")
+    d_guide.add_argument("--all", action="store_true", help="generate guides for every saved deck")
+    d_guide.add_argument("--games", type=int, default=8000)
+    d_guide.set_defaults(func=_cmd_deck_guide)
     d_show = deck.add_parser("show", help="parse + resolve a deck (file or saved name)")
     d_show.add_argument("file", help="deck file path or saved deck name")
     d_show.set_defaults(func=_cmd_deck_show)
@@ -780,8 +849,11 @@ def main(argv: list[str] | None = None) -> int:
     i_import = inv.add_parser("import", help="import collection CSV(s) (e.g. ManaBox)")
     i_import.add_argument("files", nargs="+", help="one or more collection CSV files")
     i_import.set_defaults(func=_cmd_inventory_import)
-    i_show = inv.add_parser("show", help="inventory stats, or owned count for --card")
-    i_show.add_argument("--card", help="show owned count + printings for this card")
+    inv.add_parser("sync", help="re-merge registered decks into the inventory").set_defaults(
+        func=_cmd_inventory_sync
+    )
+    i_show = inv.add_parser("show", help="inventory stats, or locations for --card")
+    i_show.add_argument("--card", help="show owned count + where each copy lives")
     i_show.set_defaults(func=_cmd_inventory_show)
 
     args = parser.parse_args(argv)

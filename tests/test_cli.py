@@ -15,6 +15,7 @@ def test_deck_save_list_diff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)  # saved decks land under tmp
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "app.db")  # isolate from the real DB
     (tmp_path / "a.txt").write_text(DECK_A)
     (tmp_path / "b.txt").write_text(DECK_B)
 

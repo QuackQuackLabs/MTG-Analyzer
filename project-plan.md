@@ -3,9 +3,10 @@
 > **Living document.** Every agent reads this before starting and updates status/checkboxes when
 > finishing a unit of work. Last updated: **2026-06-18**.
 >
-> **Status: Phases 0–7 complete** — feature-complete for local, chat-driven use (analyze, recommend,
-> simulate, build-from-collection, combo/interaction Q&A; 81 tests, ruff+mypy clean). Only the
-> deferred web app (publishing, §7) remains. Primary interface is chat via Claude Code.
+> **Status: Phases 0–8 complete** — feature-complete for local, chat-driven use (analyze, recommend,
+> simulate, build-from-collection, combo/interaction Q&A, **collection management + strategy
+> guides**; 86 tests, ruff+mypy clean). Only the deferred web app (publishing, §7) remains. Primary
+> interface is chat via Claude Code.
 
 ## 1. Vision
 
@@ -201,6 +202,21 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       with the tiny test inventory → 40/100 with clear shortfall notes.*
 - Seeds from EDHREC recommendations (∩ inventory via owned-first). Manabase upgrade
   (duals/fetches) is a future refinement.
+
+### Phase 8 — Collection management & strategy guides  `[x]`
+- [x] **Unified inventory with locations** (`data/inventory_store.py` + `data/collection.py`): one
+      `data/inventory.csv` (master, with a **Location** column) + per-deck files in `data/decks/`.
+      Imported "extra" CSVs = the **Available** pool; every registered deck's cards are merged in
+      `Location = <deck slug>`. `mtg inventory import|sync|show`; `deck save` auto-syncs. Migration
+      adds `location` to pre-existing inventory tables.
+- [x] **Availability-gated recommend/build:** upgrades/building only use cards that are Available
+      (or already in the target deck) — a card committed to another deck isn't suggested
+      (basics/"any number" exempt). `inventory show --card` lists where each copy lives.
+- [x] **Strategy guides** (`analysis/guide.py`): `mtg deck guide <name>|--all` composes a pilot's
+      1-page markdown guide (game plan, win cons + combo lines, mulligan from sim, sequencing, key
+      cards, at-a-glance) → `data/guides/<slug>.md`. Grounded in analysis + sim + Commander Spellbook.
+- *Validated on real data: 1,043 distinct cards imported (0 unresolved); Sol Ring tracked across
+  Available + 3 decks; Henzie guide lists all 3 combos with steps.* 86 tests; ruff/mypy clean.
 
 ### Phase 7 — Polish & quality  `[x]`
 - [x] **Saved deck library** (`data/deck_library.py`): `mtg deck save|list|remove|diff`; all deck
