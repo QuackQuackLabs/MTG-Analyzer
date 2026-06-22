@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime
 import re
 import sys
+from collections import Counter
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any, TypeVar
@@ -25,15 +27,18 @@ from mtg_analyzer.data.collection import export_csv, sync_decks
 from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.data.deck_library import DeckLibrary, load_deck_text, slugify
 from mtg_analyzer.data.inventory_store import InventoryStore
+from mtg_analyzer.data.match_log import MatchLog
 from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
 from mtg_analyzer.models.card import Card
 from mtg_analyzer.models.combo import Combo, DeckCombos
 from mtg_analyzer.models.deck import ResolvedDeck
+from mtg_analyzer.models.match_log import WIN_METHODS, LoggedGame
 from mtg_analyzer.recommend.builder import build_deck
 from mtg_analyzer.recommend.edhrec import EdhrecCache, EdhrecClient
 from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
+from mtg_analyzer.simulation.battle import build_profile, calibrate_match, simulate_match
 from mtg_analyzer.simulation.goldfish import simulate
 from mtg_analyzer.models.qa import CardKnowledge
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
@@ -504,6 +509,305 @@ def _cmd_deck_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_battle(args: argparse.Namespace) -> int:
+    if not 2 <= len(args.decks) <= 4:
+        print("Provide 2 decks (1v1) up to 4 decks (pod).", file=sys.stderr)
+        return 1
+    db = CardDatabase()
+    profiles = []
+    try:
+        for name in args.decks:
+            deck = resolve_deck(db, parse_deck(load_deck_text(name)))
+            combos = [] if args.no_combos else _find_deck_combos(deck)
+            report = analyze(deck, included_combos=combos)
+            sim = simulate(deck, games=args.sim_games)
+            profiles.append(build_profile(Path(name).stem, deck, report, sim))
+    finally:
+        db.close()
+
+    if args.calibrate:
+        print("Calibration sweep — win rates vs. interaction-answer base "
+              "(model health = low inevitability share):\n")
+        header = "  ans_base  " + "".join(f"{p.name[:10]:>11}" for p in profiles) + "   avg_turn  inev%"
+        print(header)
+        for row in calibrate_match(profiles, games=max(800, args.games // 2), seed=args.seed):
+            cells = "".join(f"{r:>10.0%} " for r in row.win_rates)
+            print(f"  {row.answer_base:>6.2f}    {cells}  {row.avg_len:>6.1f}  {row.inevitability_share:>5.0%}")
+        print("\n  (Spread across rows = how sensitive the result is to the interaction assumption.)")
+        return 0
+
+    result = simulate_match(profiles, games=args.games, seed=args.seed)
+    mode = "1v1" if result.players == 2 else f"{result.players}-player pod"
+    print(f"Battle simulation — {mode}, {result.games:,} games (avg game ends ~turn "
+          f"{result.avg_game_length})\n")
+    print("Battle profiles (abstracted from analysis + goldfish sim):")
+    for p in profiles:
+        tag = "  COMBO" if p.has_combo else ""
+        print(f"  {p.name:16} {p.archetype:9} clock~T{p.clock_mean:<4.1f} "
+              f"interaction {p.interaction:<2} draw {p.card_advantage:<2} tutors {p.tutors}{tag}")
+
+    print("\nWin rate  [sensitivity band]   (decks sorted by win rate):")
+    for d in sorted(result.decks, key=lambda x: -x.win_rate):
+        band = f"[{d.win_rate_low:.0%}–{d.win_rate_high:.0%}]"
+        wt = f"win ~T{d.avg_win_turn}" if d.avg_win_turn is not None else ""
+        methods = ", ".join(f"{k} {v:.0%}" for k, v in sorted(d.methods.items(), key=lambda x: -x[1]))
+        print(f"  {d.name:16} {d.win_rate:5.0%}  {band:13} {wt:11} {methods}")
+        if result.players > 2:
+            print(f"  {'':16}        archenemy {d.archenemy_rate:.0%} · died-first {d.died_first_rate:.0%}")
+
+    print("\nWhy — clock (raw goldfish speed) vs. equity (realized wins):")
+    for d in sorted(result.decks, key=lambda x: x.equity_rank):
+        arrow = "→" if d.rank_shift == 0 else ("↑" if d.rank_shift > 0 else "↓")
+        print(f"  {d.name:16} {arrow} {d.explain}")
+
+    print("\nAssumptions:")
+    for a in result.assumptions:
+        print(f"  • {a}")
+    for note in result.notes:
+        print(f"\n⚠ {note}")
+    return 0
+
+
+def _select_indices(raw: str, count: int) -> list[int]:
+    """Parse a '1 3 4' / '1,3,4' selection into 0-based indices, validating range + duplicates.
+    Pure + testable; raises ValueError with a human message the prompt loop echoes back."""
+    tokens = raw.replace(",", " ").split()
+    if not tokens:
+        raise ValueError("enter at least one number")
+    out: list[int] = []
+    for tok in tokens:
+        if not tok.isdigit():
+            raise ValueError(f"{tok!r} isn't a number")
+        i = int(tok)
+        if not 1 <= i <= count:
+            raise ValueError(f"{i} is out of range 1–{count}")
+        if i - 1 in out:
+            raise ValueError(f"{i} repeated")
+        out.append(i - 1)
+    return out
+
+
+def _record_game(
+    *, pod_names: list[str], winner: str, died_first: str | None, archenemy: str | None,
+    end_turn: int | None, win_method: str | None, date: str | None, notes: str | None,
+    sim_games: int, no_combos: bool,
+) -> int:
+    """Resolve saved-deck names → slugs, snapshot each deck's BattleProfile as-played, validate, and
+    append the game. Shared by the flag-based `add` and the interactive `form`."""
+    lib = DeckLibrary()
+    texts: dict[str, str] = {}
+    pod: list[str] = []
+    for name in pod_names:
+        text = lib.get(name)
+        if text is None:
+            print(f"Deck {name!r} isn't saved — save it first with `mtg deck save <name> <file>` "
+                  "so logged games stay joinable.", file=sys.stderr)
+            return 1
+        slug = slugify(name)
+        if slug in texts:
+            print(f"Duplicate deck in the pod: {name!r}.", file=sys.stderr)
+            return 1
+        texts[slug] = text
+        pod.append(slug)
+
+    def in_pod(value: str | None, label: str) -> tuple[bool, str | None]:
+        if value is None:
+            return True, None
+        slug = slugify(value)
+        if slug not in texts:
+            print(f"{label} {value!r} is not one of the pod decks {pod_names}.", file=sys.stderr)
+            return False, None
+        return True, slug
+
+    ok_w, winner_slug = in_pod(winner, "winner")
+    ok_d, died_slug = in_pod(died_first, "died-first")
+    ok_a, arch_slug = in_pod(archenemy, "archenemy")
+    if not (ok_w and ok_d and ok_a) or winner_slug is None:
+        return 1
+
+    # Snapshot each deck's BattleProfile as-played — drift insurance for the fit (9C).
+    db = CardDatabase()
+    profiles = {}
+    try:
+        for slug in pod:
+            deck = resolve_deck(db, parse_deck(texts[slug]))
+            combos = [] if no_combos else _find_deck_combos(deck)
+            report = analyze(deck, included_combos=combos)
+            sim = simulate(deck, games=sim_games)
+            profiles[slug] = build_profile(slug, deck, report, sim)
+    finally:
+        db.close()
+
+    game = LoggedGame(
+        date=date or datetime.date.today().isoformat(),
+        pod=pod, winner=winner_slug, died_first=died_slug, end_turn=end_turn,
+        win_method=win_method, archenemy=arch_slug, profiles=profiles, notes=notes,
+    )
+    log = MatchLog()
+    log.append(game)
+    total = len(log.load().games)
+    print(f"Logged {game.date}: {' · '.join(pod)} → winner {winner_slug}"
+          + (f" (died-first {died_slug})" if died_slug else "")
+          + (f", ended T{game.end_turn}" if game.end_turn else "") + ".")
+    print(f"Corpus: {total} game(s) at {log.path}.")
+    if total < 30:
+        print(f"  ~{30 - total} more to reach a first directional fit (~30–45 games; ~60–80 for confidence).")
+    return 0
+
+
+def _cmd_matchlog_add(args: argparse.Namespace) -> int:
+    return _record_game(
+        pod_names=args.pod, winner=args.winner, died_first=args.died_first,
+        archenemy=args.archenemy, end_turn=args.end_turn, win_method=args.win_method,
+        date=args.date, notes=args.notes, sim_games=args.sim_games, no_combos=args.no_combos,
+    )
+
+
+def _collect_game_form(
+    saved: list[str], read: Callable[[str], str], write: Callable[[str], None]
+) -> dict[str, Any] | None:
+    """Interactive 'fill-out form' run after a game — picks decks from a numbered list of saved
+    decks and prompts field by field, re-asking on bad input. I/O is injected so it's testable.
+    Returns the collected answers (deck display-names), or None if the user aborts at the pod step."""
+    write("Saved decks:")
+    for i, name in enumerate(saved, 1):
+        write(f"  {i}. {name}")
+
+    def ask_pod() -> list[str] | None:
+        while True:
+            raw = read("Which decks played? (numbers, 2–4, e.g. '1 3 4'; blank to cancel): ").strip()
+            if not raw:
+                return None
+            try:
+                idx = _select_indices(raw, len(saved))
+            except ValueError as exc:
+                write(f"  ↳ {exc}; try again.")
+                continue
+            if not 2 <= len(idx) <= 4:
+                write("  ↳ pick 2–4 decks; try again.")
+                continue
+            return [saved[i] for i in idx]
+
+    pod = ask_pod()
+    if pod is None:
+        return None
+    write("Pod: " + ", ".join(f"{i}. {n}" for i, n in enumerate(pod, 1)))
+
+    def ask_pod_member(prompt: str, *, optional: bool) -> str | None:
+        while True:
+            raw = read(prompt).strip()
+            if not raw:
+                if optional:
+                    return None
+                write("  ↳ required; pick a number.")
+                continue
+            try:
+                idx = _select_indices(raw, len(pod))
+            except ValueError as exc:
+                write(f"  ↳ {exc}; try again.")
+                continue
+            if len(idx) != 1:
+                write("  ↳ pick exactly one; try again.")
+                continue
+            return pod[idx[0]]
+
+    winner = ask_pod_member("Who won? (number): ", optional=False)
+    died_first = (ask_pod_member("Who died first? (number, blank to skip): ", optional=True)
+                  if len(pod) > 2 else None)
+
+    def ask_int(prompt: str) -> int | None:
+        while True:
+            raw = read(prompt).strip()
+            if not raw:
+                return None
+            if raw.isdigit() and int(raw) >= 1:
+                return int(raw)
+            write("  ↳ enter a whole number ≥ 1, or blank to skip.")
+
+    end_turn = ask_int("What turn did it end? (number, blank to skip): ")
+
+    methods = sorted(WIN_METHODS)
+    write("Win method — " + ", ".join(f"{i}. {m}" for i, m in enumerate(methods, 1)))
+
+    def ask_method() -> str | None:
+        while True:
+            raw = read("How did it end? (number, blank to skip): ").strip()
+            if not raw:
+                return None
+            try:
+                idx = _select_indices(raw, len(methods))
+            except ValueError as exc:
+                write(f"  ↳ {exc}; try again.")
+                continue
+            if len(idx) != 1:
+                write("  ↳ pick exactly one; try again.")
+                continue
+            return methods[idx[0]]
+
+    win_method = ask_method()
+    today = datetime.date.today().isoformat()
+    date = read(f"Date played [{today}]: ").strip() or today
+    return {
+        "pod": pod, "winner": winner, "died_first": died_first, "end_turn": end_turn,
+        "win_method": win_method, "date": date,
+    }
+
+
+def _cmd_matchlog_form(args: argparse.Namespace) -> int:
+    saved = DeckLibrary().names()
+    if len(saved) < 2:
+        print("Need at least 2 saved decks to log a game. Save decks with `mtg deck save`.",
+              file=sys.stderr)
+        return 1
+    answers = _collect_game_form(saved, input, print)
+    if answers is None:
+        print("Cancelled — nothing logged.")
+        return 0
+    summary = (f"\n{answers['date']}: {' · '.join(answers['pod'])} → winner {answers['winner']}"
+               + (f", died-first {answers['died_first']}" if answers["died_first"] else "")
+               + (f", T{answers['end_turn']}" if answers["end_turn"] else "")
+               + (f", {answers['win_method']}" if answers["win_method"] else ""))
+    print(summary)
+    if input("Save this game? [Y/n]: ").strip().lower() in ("n", "no"):
+        print("Discarded — nothing logged.")
+        return 0
+    return _record_game(
+        pod_names=answers["pod"], winner=answers["winner"], died_first=answers["died_first"],
+        archenemy=None, end_turn=answers["end_turn"], win_method=answers["win_method"],
+        date=answers["date"], notes=None, sim_games=args.sim_games, no_combos=args.no_combos,
+    )
+
+
+def _cmd_matchlog_list(args: argparse.Namespace) -> int:
+    res = MatchLog().load()
+    if not res.games and not res.errors:
+        print("No games logged yet. Record one with "
+              "`mtg matchlog add <pod…> --winner <deck> [--died-first <deck>] [--end-turn N]`.")
+        return 0
+    print(f"{len(res.games)} logged game(s):\n")
+    for g in res.games:
+        extra = []
+        if g.died_first:
+            extra.append(f"died-first {g.died_first}")
+        if g.end_turn:
+            extra.append(f"T{g.end_turn}")
+        if g.win_method:
+            extra.append(g.win_method)
+        tail = ("  [" + ", ".join(extra) + "]") if extra else ""
+        print(f"  {g.date}  {' · '.join(g.pod)}  → {g.winner}{tail}")
+
+    wins = Counter(g.winner for g in res.games)
+    played = Counter(slug for g in res.games for slug in g.pod)
+    print("\nObserved win rate (raw, uncalibrated):")
+    for slug in sorted(played, key=lambda s: -wins[s] / played[s]):
+        print(f"  {slug:18} {wins[slug]}/{played[slug]}  ({wins[slug] / played[slug]:.0%})")
+    if res.errors:
+        print(f"\n⚠ {len(res.errors)} malformed line(s) skipped (fix or delete in the file):")
+        for err in res.errors:
+            print(f"  {err}")
+    return 0
+
+
 def _cmd_deck_diff(args: argparse.Namespace) -> int:
     def counts(arg: str) -> dict[str, int]:
         parsed = parse_deck(load_deck_text(arg))
@@ -834,6 +1138,48 @@ def main(argv: list[str] | None = None) -> int:
     d_sim.add_argument("--games", type=int, default=10_000)
     d_sim.add_argument("--draw", action="store_true", help="simulate on the draw (default: on the play)")
     d_sim.set_defaults(func=_cmd_deck_simulate)
+
+    battle = sub.add_parser("battle", help="heuristic 1v1/4-player matchup sim (NOT a rules engine)")
+    battle.add_argument("decks", nargs="+", help="2 decks = 1v1, 3–4 = pod (saved names or paths)")
+    battle.add_argument("--games", type=int, default=2000, help="match games to simulate")
+    battle.add_argument("--sim-games", type=int, default=1500,
+                        help="goldfish games per deck for the clock estimate")
+    battle.add_argument("--seed", type=int, default=1)
+    battle.add_argument("--no-combos", action="store_true",
+                        help="skip live combo lookup (faster / offline)")
+    battle.add_argument("--calibrate", action="store_true",
+                        help="sweep the interaction assumption + show model health instead of one result")
+    battle.set_defaults(func=_cmd_battle)
+
+    matchlog = sub.add_parser(
+        "matchlog", help="record + review real games (the corpus the battle sim is fit against)"
+    ).add_subparsers(dest="matchlog_command", required=True)
+    m_add = matchlog.add_parser("add", help="log a real game's result")
+    m_add.add_argument("pod", nargs="+", help="2–4 saved deck names that played")
+    m_add.add_argument("--winner", required=True, help="saved deck name that won")
+    m_add.add_argument("--died-first", help="saved deck eliminated first (multiplayer)")
+    m_add.add_argument("--end-turn", type=int, help="turn the game ended")
+    m_add.add_argument("--win-method", choices=sorted(WIN_METHODS),
+                       help="optional: how the game ended")
+    m_add.add_argument("--archenemy", help="optional: the deck the table most feared")
+    m_add.add_argument("--date", help="ISO date the game was played (default: today)")
+    m_add.add_argument("--notes", help="freeform notes")
+    m_add.add_argument("--sim-games", type=int, default=800,
+                       help="goldfish games for the profile snapshot")
+    m_add.add_argument("--no-combos", action="store_true",
+                       help="skip live combo lookup in the snapshot (offline / faster)")
+    m_add.set_defaults(func=_cmd_matchlog_add)
+    m_form = matchlog.add_parser(
+        "form", help="interactive fill-out form to log a game (friendlier than `add`)"
+    )
+    m_form.add_argument("--sim-games", type=int, default=800,
+                        help="goldfish games for the profile snapshot")
+    m_form.add_argument("--no-combos", action="store_true",
+                        help="skip live combo lookup in the snapshot (offline / faster)")
+    m_form.set_defaults(func=_cmd_matchlog_form)
+    matchlog.add_parser("list", help="list logged games + observed win rates").set_defaults(
+        func=_cmd_matchlog_list
+    )
     d_build = deck.add_parser("build", help="build a deck for a commander from your collection")
     d_build.add_argument("commander", help="commander name")
     d_build.add_argument("--budget", type=float, help="max USD for not-owned cards")

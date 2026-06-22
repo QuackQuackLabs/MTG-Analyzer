@@ -60,6 +60,27 @@ def test_sync_decks_merges_deck_cards(db: CardDatabase, tmp_path: Path) -> None:
     store.close()
 
 
+def test_deck_library_resolves_human_named_files(tmp_path: Path) -> None:
+    library = DeckLibrary(tmp_path / "decks")
+    # A file dropped in with spaces/accents/caps, not the canonical slug form.
+    (library.dir / "Frodo and Sam.txt").write_text("1 Sol Ring\n", encoding="utf-8")
+    (library.dir / "Sméagol.txt").write_text("1 Llanowar Elves\n", encoding="utf-8")
+
+    # Lookup works by display name, by slug, and round-trips through names().
+    assert library.get("Frodo and Sam") == "1 Sol Ring\n"
+    assert library.get("frodo-and-sam") == "1 Sol Ring\n"
+    assert library.get("Sméagol") == "1 Llanowar Elves\n"
+    assert "Frodo and Sam" in library.names()
+    # save() overwrites the existing human-named file rather than creating a duplicate.
+    library.save("Frodo and Sam", "1 Mox Diamond\n")
+    assert sorted(p.name for p in library.dir.glob("*.txt")) == ["Frodo and Sam.txt", "Sméagol.txt"]
+    assert library.get("Frodo and Sam") == "1 Mox Diamond\n"
+    # Robust to Unicode normalization: file stored decomposed (NFD), looked up composed (NFC).
+    import unicodedata
+    (library.dir / unicodedata.normalize("NFD", "Café.txt")).write_text("1 Sol Ring\n", encoding="utf-8")
+    assert library.get(unicodedata.normalize("NFC", "Café")) == "1 Sol Ring\n"
+
+
 def make_card(name: str, **kw: Any) -> Card:
     base = {"id": name, "name": name, "layout": "normal", "cmc": 2.0,
             "type_line": "Creature", "oracle_text": "", "color_identity": ["U"],
@@ -79,3 +100,48 @@ def test_build_guide_renders_sections() -> None:
     assert "## Game plan" in md
     assert "## Mulligan" in md
     assert "## Win conditions" in md
+
+
+def test_guide_combo_engine_names_outlet() -> None:
+    """An engine combo (infinite tokens) should name a payoff the deck runs."""
+    from mtg_analyzer.models.combo import Combo, ComboCard
+
+    cmd = make_card("Cmdr", type_line="Legendary Creature")
+    piece_a = make_card("Token Engine", type_line="Enchantment")
+    piece_b = make_card("Token Maker", type_line="Creature")
+    hoof = make_card("Craterhoof Behemoth", type_line="Creature",
+                     oracle_text="Creatures you control get +X/+X and gain trample.")
+    deck = ResolvedDeck(name="combo-deck", entries=[
+        ResolvedEntry(quantity=1, section="commander", requested_name="Cmdr", card=cmd),
+        ResolvedEntry(quantity=1, section="main", requested_name="Token Engine", card=piece_a),
+        ResolvedEntry(quantity=1, section="main", requested_name="Token Maker", card=piece_b),
+        ResolvedEntry(quantity=1, section="main", requested_name="Craterhoof Behemoth", card=hoof),
+    ])
+    combo = Combo(id="1", produces=["Infinite creature tokens"], identity="G",
+                  uses=[ComboCard(oracle_id=None, name="Token Engine"),
+                        ComboCard(oracle_id=None, name="Token Maker")], requires=[])
+    report = analyze(deck, included_combos=[combo])
+    md = build_guide(deck, report, sim=None, combos=[combo], edhrec=[])
+    assert "convert it with Craterhoof Behemoth" in md
+    assert "Protect (kill-on-sight):** Token Engine, Token Maker" in md
+
+
+def test_guide_combo_engine_flags_missing_outlet() -> None:
+    """An engine combo with no payoff in the deck should be flagged as a gap."""
+    from mtg_analyzer.models.combo import Combo, ComboCard
+
+    cmd = make_card("Cmdr", type_line="Legendary Creature")
+    a = make_card("Rock A", type_line="Artifact", oracle_text="{T}: Add {C}{C}.")
+    b = make_card("Rock B", type_line="Artifact", oracle_text="{T}: Untap target artifact.")
+    deck = ResolvedDeck(name="no-outlet", entries=[
+        ResolvedEntry(quantity=1, section="commander", requested_name="Cmdr", card=cmd),
+        ResolvedEntry(quantity=1, section="main", requested_name="Rock A", card=a),
+        ResolvedEntry(quantity=1, section="main", requested_name="Rock B", card=b),
+    ])
+    combo = Combo(id="2", produces=["Infinite colorless mana"], identity="C",
+                  uses=[ComboCard(oracle_id=None, name="Rock A"),
+                        ComboCard(oracle_id=None, name="Rock B")], requires=[])
+    report = analyze(deck, included_combos=[combo])
+    md = build_guide(deck, report, sim=None, combos=[combo], edhrec=[])
+    assert "no outlet in the deck" in md
+    assert "mana sink" in md

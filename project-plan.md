@@ -1,12 +1,13 @@
 # MTG Analyzer — Project Plan
 
 > **Living document.** Every agent reads this before starting and updates status/checkboxes when
-> finishing a unit of work. Last updated: **2026-06-18**.
+> finishing a unit of work. Last updated: **2026-06-20**.
 >
-> **Status: Phases 0–8 complete** — feature-complete for local, chat-driven use (analyze, recommend,
-> simulate, build-from-collection, combo/interaction Q&A, **collection management + strategy
-> guides**; 86 tests, ruff+mypy clean). Only the deferred web app (publishing, §7) remains. Primary
-> interface is chat via Claude Code.
+> **Status: Phases 0–8 complete; Phase 9 (battle simulator) in progress (A+B shipped, C calibration
+> open).** Feature-complete for local, chat-driven use (analyze, recommend, simulate,
+> build-from-collection, combo/interaction Q&A, **collection management + strategy guides**, and a
+> heuristic **battle/matchup simulator**; 111 tests, ruff+mypy clean). Active work: Phase 9 calibration
+> (§4). Deferred: the web app (publishing, §7). Primary interface is chat via Claude Code.
 
 ## 1. Vision
 
@@ -215,14 +216,25 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
 - [x] **Strategy guides** (`analysis/guide.py`): `mtg deck guide <name>|--all` composes a pilot's
       1-page markdown guide (game plan, win cons + combo lines, mulligan from sim, sequencing, key
       cards, at-a-glance) → `data/guides/<slug>.md`. Grounded in analysis + sim + Commander Spellbook.
+- [x] **Win-condition analysis** (in `guide.py`): the Win conditions section now follows deck-primer
+      best practice — names a **Primary** path and **Backups** (redundancy), and for each combo
+      classifies its produced features as **terminal** (wins outright) vs. an **engine** that needs an
+      outlet, then names the payoff card in the deck that converts it (or flags *no outlet — gap*).
+      Adds a **kill-on-sight** line (combo pieces to protect). Near-duplicate combo variants are
+      capped (top 6 by popularity, rest collapsed to a count) to keep guides to ~1 page.
 - *Validated on real data: 1,043 distinct cards imported (0 unresolved); Sol Ring tracked across
-  Available + 3 decks; Henzie guide lists all 3 combos with steps.* 86 tests; ruff/mypy clean.
+  Available + 3 decks; Henzie guide lists all 3 combos with steps; Galadriel's infinite-token engine
+  correctly names Craterhoof Behemoth as its outlet.* 97 tests; ruff/mypy clean.
 
 ### Phase 7 — Polish & quality  `[x]`
 - [x] **Saved deck library** (`data/deck_library.py`): `mtg deck save|list|remove|diff`; all deck
       commands accept a saved name *or* a file path (`load_deck_text`). Decks stored as text under
       `data/decks/` (gitignored). `deck diff` shows added/removed cards between two decks. *(Auto
       version-history snapshots deferred — diff covers the practical need.)*
+  - [x] **Human-named deck files** (`slugify` via NFKD accent-strip + tolerant `_find`): a file
+        dropped into `data/decks/` as `Frodo and Sam.txt` / `Sméagol.txt` resolves by display name,
+        slug, or canonical form, robust to macOS NFD vs. NFC; `save` overwrites the existing file
+        instead of creating a slug-named duplicate. Covered by `test_collection.py`.
 - [x] **EDHREC caching** (`EdhrecCache`): 24h TTL in `app.db`; `recommend`/`build` reuse cached
       commander data (cold 1.14s → warm 0.67s, no network). Scryfall bulk refreshes via the manifest.
       *A scheduled nightly cron is an ops concern (run `mtg data refresh` + `mtg rules refresh`).*
@@ -232,6 +244,68 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
 - [x] **Quality pass:** 81 tests; ruff + mypy clean. Engine logic 85–100% covered (CLI/bulk
       downloader are thin glue, exercised via real runs). Perf on the full 38k-card DB: card lookup
       ~2 ms, parse+resolve a 100-card deck ~35 ms, analyze ~1 ms.
+
+### Phase 9 — Heuristic battle/matchup simulator  `[~]` ← **A+B shipped, C in progress**
+Pod-aware **1v1 + 4-player** match simulator that abstracts each deck to a `BattleProfile` (clock,
+interaction, card advantage, resilience, combo, threat) derived from existing `analyze()`/`simulate()`
+signals, then runs a heuristic turn loop with interaction trades and (4-player) politics/threat
+assessment. **Explicitly not a rules engine** (plan §2 / golden rule #5) — outputs are *relative* win
+rates with **sensitivity bands**, never card-accurate. Full design, module layout, calibration plan,
+and phasing: **[docs/battle-simulator-design.md](docs/battle-simulator-design.md)**.
+- [x] Phase A — `BattleProfile` mapper (`simulation/battle.py`), match loop (1v1 + basic pod),
+      tunable `battle_params.py`, `models/battle.py`, CLI `mtg battle <decks…> [--games --sim-games
+      --seed --no-combos]`, sensitivity bands. 6 invariant tests (`test_battle.py`): determinism,
+      faster-clock-wins-more, interaction-helps-vs-combo, pod-blunts-fast-combo, rates sum to 1.
+- [x] Phase B — pod politics via a **decentralized assessment + voting engine**: each turn every
+      player privately scores opponents (power level + proximity-to-kill + who's been damaging them +
+      a small individual read) and votes its #1 threat; the most-voted deck is the **consensus
+      archenemy**, and *its voters* are the ones who commit answers (coordinated, capped). Votes split
+      by perspective, so the table doesn't always agree (verified: a 4× mirror rotates the archenemy
+      37/24/22/18). Archenemy metric = avg share of turns a deck held the role; died-first tracked too.
+- [~] Phase C — **resolution fixed**: interaction is now a *finite* reserve (low refill), so pods
+      resolve mid-game — inevitability fallback dropped from ~50% to **0%**, avg game ~T16 → ~T6.
+      **Calibration sweep** shipped (`calibrate_match` + `mtg battle --calibrate`). **Politics retuned**
+      (user direction: politicking + pre-game power awareness, not random): the table *coordinates*
+      against the pre-identified archenemy (up to `ARCHENEMY_ANSWERERS` pitch in) while trailing
+      attackers face one answerer; flat tutor bonus gated by readiness (no turn-1 combo). Result is
+      now intuitive — a fast deck wins ~60% heads-up but ~19% as the 4-pod archenemy.
+- [x] Phase C — **explainability** (`clock_rank` vs. `equity_rank` gap + per-deck attribution):
+      `DeckWinStats` now carries `clock_mean`/`clock_rank`/`equity_rank`/`rank_shift` and a one-line
+      `explain` (clock→equity, politics pressure, dominant win method); the rank gap surfaces how much
+      interaction + politics reshaped raw goldfish speed (design §5). CLI prints a "Why" section +
+      a headline clock-vs-equity note. *Real pod: Henzie (fastest clock) finishes #3 — drew the table
+      (archenemy 62%); slow Sauron punches to #1.* 2 tests (rank-shift conservation + politics
+      attribution); 99 total, ruff+mypy clean.
+- [x] Phase C — **validation harness (anchor fixtures)** + a seat-bias fix the harness caught.
+      4 canonical matchups now pin behavior *magnitudes* with tolerance bands (not just A>B
+      relations): speed dominates 1v1 (~0.99), a pod blunts a fast deck (~0.83 heads-up → ~0.29 pod,
+      archenemy ~0.60), a 4-mirror is symmetric (~0.25 each), grind out-values aggro (~0.88). Writing
+      the mirror anchor exposed a **seat-order bias** (deterministic seat-index tiebreaks → last seat
+      won ~0.38 vs first ~0.15); fixed by resolving target-selection and archenemy-consensus ties
+      uniformly via the seeded RNG (`_argmax(…, rng)` + an rng key on the alpha-strike target). Mirror
+      now ~0.25/seat; real non-identical pods unchanged (Sauron 39 / Tom 37 / Henzie 20 / Galadriel 4).
+      103 tests, ruff+mypy clean.
+- [~] Phase C — **real-game fitting** (the last 9C item; planned + decisions locked, see
+      **[docs/battle-calibration-fitting.md](docs/battle-calibration-fitting.md)**). Locked: **Standard**
+      logging (pod + winner + died-first + end-turn) and an **anchor-protected nudge** fit (regularize
+      toward current defaults; reject any fit that breaks the 4 anchors; reversible `data/`-local
+      override). Three sub-steps:
+      - [x] **9C-1 logging infra** — `models/match_log.py` (`LoggedGame`, validated) +
+            `data/match_log.py` (append-only JSONL, surfaces malformed rows) + CLI `mtg matchlog
+            form|add|list` (named `matchlog`, not `battle log`, to avoid colliding with `battle`'s
+            positional deck list). **`matchlog form`** is the friendly path — an interactive
+            fill-out form (pick the pod from a numbered list, prompt field-by-field, re-ask on bad
+            input, confirm before save); `add` is the scriptable equivalent (both share
+            `_record_game`). Stores the **full** `BattleProfile` per deck as-played (drift insurance,
+            upgraded from a hash at no user cost); optional `--win-method`/`--archenemy` ride along.
+            `matchlog list` shows raw observed win rates + corpus progress. 8 tests (validation +
+            JSONL round-trip + malformed-line surfacing + form parsing/flow); 111 total, ruff+mypy clean.
+      - [ ] **9C-2 fit engine** (`mtg battle fit`): NLL of observed winners under simulated
+            win-probabilities, ~3–4 fittable knobs (`INTERACTION_ANSWER_BASE`,
+            `POLITICS_ARCHENEMY_ANSWER`, `THREAT_PROXIMITY_W`), scipy Nelder-Mead, regularized.
+            *Blocked on a corpus — ~30–45 games for a directional fit, ~60–80 for confidence.*
+      - [ ] **9C-3 apply + guardrail** (anchor fixtures as a hard gate; write fitted params to a
+            reversible `data/`-local override, never the source defaults).
 
 ## 5. Recommendation engine design (reference)
 
@@ -270,8 +344,10 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 - **Self-hosted Commander Spellbook backend** (MIT, Docker) — if a complete *offline* combo mirror
   is ever wanted, run their backend locally instead of scraping the public API's 900+ variant pages
   (which trips rate limits). Until then, live find-my-combos + per-card search + cache suffices.
-- **Price tracking over time**, alternate formats (Brawl, Oathbreaker), playtest/draft modes,
-  pod-aware multiplayer simulation.
+- **Price tracking over time**, alternate formats (Brawl, Oathbreaker), playtest/draft modes.
+- **Heuristic battle/matchup simulator (1v1 + 4-player)** — pod-aware multiplayer *dynamics* model
+  (clock/interaction/card-advantage/politics), NOT a rules engine. Scoped in
+  [docs/battle-simulator-design.md](docs/battle-simulator-design.md); tracked as **Phase 9** below.
 
 ## 8. Status log
 
@@ -341,3 +417,88 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   85–100% covered, 81 tests) + CLI smoke tests; perf check on the full DB (all ops <40 ms). **Phases
   0–7 complete — the tool is feature-complete for local, chat-driven use.** Only the deferred web UI
   (publishing, §7) remains.
+- **2026-06-19** — **Phase 9 scoped (heuristic battle/matchup simulator).** Prompted by a 4-deck
+  "who wins" request: confirmed the goldfish sim has no kill/combat/interaction model and can't run a
+  true match (golden rule #5). Wrote a full design — `BattleProfile` abstraction from existing
+  analyze/simulate signals, heuristic 1v1 + 4-player turn loop with interaction trades + politics,
+  and a calibration/sensitivity-band plan — in `docs/battle-simulator-design.md`. Added Phase 9 to
+  §4 (A: 1v1 MVP, B: 4-player politics, C: calibration).
+- **2026-06-19** — **Phase 9 Phase A built.** `simulation/battle.py` (BattleProfile mapper + turn
+  loop), `battle_params.py` (all tunables), `models/battle.py`, CLI `mtg battle`. Handles 1v1 + a
+  preliminary pod with threat-focused interaction + archenemy/died-first metrics + sensitivity bands.
+  6 invariant tests (95 total; ruff+mypy clean). End-to-end on the real decks: 1v1 Henzie/Sauron
+  54–46 (interaction edges the faster combo heads-up); 4-pod Sauron 33 / Tom 26 / Henzie 22 /
+  Galadriel 19 (Henzie the archenemy — fastest clock draws the table's answers). **Known gap:** a
+  high share of pod games still resolve via the inevitability tiebreak → Phase C calibration target.
+- **2026-06-19** — **Phase 9 B + C(partial).** Phase B: dynamic per-turn threat + archenemy-focused
+  politics (table commits answers to the live leader, under-answers trailing players → kingmaking),
+  per-game archenemy/died-first rates. Phase C: made interaction a **finite reserve** (low refill) so
+  pods resolve mid-game — inevitability fallback fell from ~50% → **0–7%**, avg game ~T16 → ~T8;
+  added `calibrate_match` + `mtg battle --calibrate` (sweeps the interaction assumption, reports
+  per-deck win spread + model health). 8 battle tests (97 total; ruff+mypy clean). New 4-pod read:
+  **Tom 38 / Sauron 28 / Galadriel 25 / Henzie 7** (stable across the calibration sweep). *Open
+  (Phase C):* real-game fitting; the archenemy penalty on the fastest deck looks overtuned.
+- **2026-06-20** — **Phase 9 politics retuned (per user direction: politicking + pre-game power
+  awareness, not random).** Replaced pooled all-opponents answering (which crushed the archenemy to
+  7%) with a coordinated model: the table commits up to `ARCHENEMY_ANSWERERS` answers to the
+  pre-identified archenemy and one to a trailing attacker. Also gated the flat tutor attempt-bonus by
+  readiness (it was letting 6-tutor Tom attempt a win on turn 1 → games ending ~T3). New, intuitive
+  behavior: fast Henzie wins ~61% in 1v1 but ~19% as the 4-pod archenemy; pod now **Tom 32 /
+  Galadriel 30 / Henzie 19 / Sauron 19**, avg game ~T6, 0% inevitability fallback. 97 tests, clean.
+- **2026-06-20** — **Phase 9 decentralized threat assessment + politicking engine** (user direction).
+  Replaced the single god's-eye archenemy with per-player assessment: each turn every living player
+  scores opponents (power baseline `threat_level` + proximity-to-own-kill + `DAMAGE_FEAR_W`×damage
+  taken + small `PERCEPTION_NOISE`) and votes; the most-voted is the consensus archenemy and *its
+  voters* commit the (capped) answers. Weighted proximity up so the consensus tracks imminent wins,
+  not abstract power. Archenemy metric switched to **avg turn-share** (a 4× Galadriel mirror rotates
+  it 37/24/22/18, proving the assessment shifts; in the real pod it pins ~95% to Henzie because it's
+  far the fastest — a faithful result). Real-deck pod: **Tom 30 / Galadriel 26 / Henzie 24 /
+  Sauron 20**; 1v1 Henzie still ~67%. 97 tests, ruff+mypy clean.
+- **2026-06-20** — **Plan review + housekeeping ahead of more planning.** Reconciled the plan with the
+  working tree: documented **human-named deck files** (NFKD-tolerant `DeckLibrary` resolution) under
+  Phase 7, fixed the header status (Phase 9 is the active frontier, not "only the web app remains"),
+  and broke Phase 9 C's open work into concrete plannable items (real-game fitting, a validation
+  harness beyond the 8 invariants, win/loss explainability). Fixed an ordering bug in a newly-added
+  `test_collection.py` case (Café NFD file created after the glob assertion) → suite green at 97.
+- **2026-06-20** — **End-to-end validation on real decks (no engine changes).** Exercised the full
+  pipeline across the user's library: intake of 4 new decks surfaced + drove the two `DeckLibrary`
+  fixes (human-named files, then the NFKD/Unicode `slugify` fix when "Sméagol" failed by-name);
+  analyze/sim/guide/recommend used to review and tune every deck; combo detection found the decks'
+  real lines (e.g. Sméagol's 8–10 Dúnedain-Rangers loops, Frodo & Sam's Exquisite Blood drains).
+  Battle simulator validated end-to-end — a 5-deck LOTR 1v1 round-robin + all five 4-player pods
+  produced **intuitive, format-dependent** results (speed wins 1v1: Frodo&Sam/Sméagol on top; pods
+  reward grind/under-the-radar: Sméagol/Tom lead, slow Sauron last), confirming the politics + clock
+  model behaves sensibly on real inputs. Suite green at 97; ruff+mypy clean across 48 source files.
+- **2026-06-20** — **Phase 9 C explainability shipped** (clock-vs-equity gap + attribution). Added
+  `clock_rank`/`equity_rank`/`rank_shift` + a one-line `explain` to `DeckWinStats`, a `_ranks` helper,
+  and a headline "raw speed is not destiny" note; CLI prints a "Why" section. The rank gap is the
+  design §5 metric that surfaces how much interaction + politics reshaped goldfish speed — e.g. the
+  real LOTR pod shows Henzie fastest (clock #1) but 3rd in equity (drew the table, archenemy 62%)
+  while slow Sauron finishes #1. 2 new battle tests (rank-shift conservation; politics attribution);
+  99 total, ruff+mypy clean. Phase 9 C now has 2 open items left (real-game fitting, validation harness).
+- **2026-06-20** — **Phase 9 C validation harness (anchor fixtures) + seat-bias fix.** Added 4 anchor
+  tests that pin matchup *magnitudes* with tolerance bands (speed dominates 1v1, pod blunts a fast
+  deck, 4-mirror symmetric, grind beats aggro) — magnitude regressions, not just A>B relations.
+  Writing the mirror anchor immediately caught a real bug: deterministic seat-index tiebreaks gave a
+  systematic seat-order advantage (last seat ~38% vs first ~15% among identical decks). Fixed by
+  breaking target-selection and archenemy-consensus ties uniformly through the seeded RNG; mirror is
+  now ~25%/seat and real (non-identical) pods are unchanged. 103 tests, ruff+mypy clean. **Phase 9 C
+  has one open item left: real-game fitting (blocked on a logged-results corpus).**
+- **2026-06-20** — **Phase 9 C real-game fitting planned; decisions locked.** Wrote
+  [docs/battle-calibration-fitting.md](docs/battle-calibration-fitting.md): Standard logging (pod +
+  winner + died-first + end-turn) and an anchor-protected nudge fit (regularize toward defaults,
+  reject any fit that breaks the 4 anchors, reversible data/-local override). Split into 9C-1 logging
+  infra (not blocked — build first to start recording), 9C-2 fit engine (NLL over ~3–4 knobs via
+  Nelder-Mead; needs ~30–45+ games), 9C-3 apply + anchor guardrail.
+- **2026-06-20** — **Phase 9 C-1 shipped (real-game logging infra).** `mtg matchlog add|list` +
+  `LoggedGame` model + append-only `data/match_log.jsonl` that surfaces malformed rows. Each game
+  snapshots the full `BattleProfile` of every pod deck as-played (drift insurance), with optional
+  win-method/archenemy fields; `list` shows raw observed win rates + progress toward a fittable
+  corpus. Named `matchlog` (not `battle log`) to avoid argparse collision with `battle`'s positional
+  decks. 5 tests; 108 total, ruff+mypy clean. **The corpus clock is now running — recording games is
+  one command. 9C-2 (the fit engine) unblocks at ~30+ logged games.**
+- **2026-06-20** — **Phase 9 C-1 follow-up: interactive `matchlog form`** (user wanted a friendlier
+  way to submit data than remembering flags). Run after a game: numbered saved-deck list → pick the
+  pod → prompt winner/died-first/turn/method → summary + confirm → save. Shares `_record_game` with
+  `add`; selection parsing factored into a pure `_select_indices` and the flow is unit-tested via
+  injected I/O. 111 tests, ruff+mypy clean.
