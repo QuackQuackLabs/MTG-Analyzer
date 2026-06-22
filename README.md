@@ -1,69 +1,167 @@
 # MTG Analyzer
 
-A local, single-user tool for **Magic: The Gathering Commander (EDH)** deck analysis. Import your
-collection and decklists, validate and score decks, detect combos, run statistical game simulations,
-and get upgrade recommendations + budget shopping lists — or have it build a deck from your inventory.
+A **local, single-user tool for Magic: The Gathering Commander (EDH)** that you drive by *chatting
+with [Claude Code](https://claude.com/claude-code)*. Import your collection and decklists, validate
+and score decks, detect combos, run statistical game and matchup simulations, get rule-grounded
+interaction answers, and get upgrade recommendations, budget shopping lists, or a whole deck built
+from cards you own.
 
-Runs entirely on your machine. No account, no hosting required.
+Everything runs on your own machine. **No account, no server, no hosting** — your collection and
+decks never leave your computer.
 
-> **Status:** Phase 0 (foundation). See **[project-plan.md](project-plan.md)** for the full roadmap
-> and current progress.
+> **How you use it:** you don't memorize commands. You open this folder in Claude Code and ask in
+> plain English — *"analyze my Sauron deck and tell me what to upgrade under $30."* Claude runs the
+> tool for you and explains the results. The `mtg` commands below exist if you'd rather drive it
+> directly.
 
-## Stack
+---
 
-- **Backend / engine:** Python 3.11+, FastAPI, SQLite, numpy/scipy, httpx, pydantic
-- **Frontend:** React + Vite + TypeScript (later phase)
-- **Data:** [Scryfall](https://scryfall.com/docs/api) (cards/rulings, bulk), Commander Spellbook
-  (combos), EDHREC (recommendation stats)
+## What you can do
 
-## Quick start (dev)
+- **Validate & score a deck** — exactly-100, singleton, color identity, legal commander, banned /
+  Game-Changer flags, category balance (lands/ramp/draw/removal/wipes), mana curve, and a 1–5
+  bracket estimate.
+- **Find combos** — what combos your deck already contains and which are one card away (via
+  Commander Spellbook).
+- **Simulate consistency** — goldfish thousands of games: keepable opening hands, mana screw/flood,
+  and what turn your commander comes down.
+- **Simulate matchups** — a heuristic 1v1 or 4-player pod "who wins" model with politics and
+  sensitivity bands (relative win rates, *not* a rules engine).
+- **Ask rules & interaction questions** — grounded in the Comprehensive Rules, official card
+  rulings, and combo data, so the answer cites real sources.
+- **Get upgrade recommendations** — gap-filling adds + lowest-impact cuts, EDHREC-blended,
+  budget-aware, and aware of what you already own.
+- **Build a deck from your collection** — pick a commander; get a legal 100 from cards you own plus
+  a shopping list for the gaps.
+- **Manage a collection** — one inventory with per-deck locations, so the tool knows which cards are
+  free to use and which are committed elsewhere.
 
-**Backend / engine:**
+## Prerequisites
 
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-pytest            # run tests
-ruff check        # lint
-mypy backend      # type-check
-uvicorn mtg_analyzer.api.app:app --reload   # serves http://localhost:8000 (/health)
-```
+- **macOS or Linux** (Windows via WSL should work too).
+- **Python 3.11+** and **git**.
+- **[Claude Code](https://claude.com/claude-code)** installed, with a Claude account/subscription —
+  this is the primary way you'll interact with the tool.
+- **~500 MB free disk** for the local card database (regenerable; never committed).
 
-**Frontend:**
+## 1. Get your own copy
 
-```bash
-cd frontend
-npm install
-npm run dev       # serves http://localhost:5173, calls the backend's /health
-```
-
-**Load local data (one-time, ~200 MB cards + ~1 MB rules):**
-
-```bash
-mtg data refresh                       # Scryfall cards + rulings → SQLite
-mtg rules refresh                      # Comprehensive Rules (auto-discovers current version)
-mtg card "Atraxa, Praetors' Voice"     # spot-check a card + its rulings
-mtg rules get 702.19                   # a rule and its subrules (Trample)
-mtg rules search "21 combat damage from a single commander"
-mtg rules glossary "Color Identity"
-mtg combos card "Thassa's Oracle"      # combos that use a card (live query, cached)
-mtg combos find mydeck.txt             # combos present + one-card-away (live, authoritative)
-```
-
-**Import your decks and collection:**
+This repo is a **GitHub template**. On the repository page, click **"Use this template" → "Create a
+new repository"** to get your own independent copy, then clone it:
 
 ```bash
-mtg deck show samples/my-deck.txt          # parse + resolve an Archidekt/Moxfield/Arena export
-mtg inventory import samples/my-cards.csv  # import a ManaBox (or Moxfield/Deckbox) collection CSV
-mtg inventory show --card "Sol Ring"       # owned count + printings
+git clone https://github.com/<your-username>/MTG-Analyzer.git
+cd MTG-Analyzer
 ```
 
-## For contributors / agents
+Your copy is yours: the decks and collection you load stay local and are gitignored, so you can keep
+your repo private or public without exposing your card data.
 
-Read **[CLAUDE.md](CLAUDE.md)** and **[project-plan.md](project-plan.md)** first. Domain knowledge
-lives in `.claude/skills/` (`scryfall-api`, `commander-format`, `mtg-data-ecosystem`).
+## 2. One-time setup
+
+```bash
+python -m venv .venv && . .venv/bin/activate   # create + activate a virtual environment
+pip install -e ".[dev]"                        # install the engine + the `mtg` command
+```
+
+Then load the data the tool reasons over (one time; refresh occasionally):
+
+```bash
+mtg data refresh     # Scryfall cards + rulings → local SQLite (downloads ~tens of MB)
+mtg rules refresh    # the official Comprehensive Rules (auto-discovers the current version)
+```
+
+The first `mtg data refresh` downloads and ingests ~38,000 cards (a few seconds of processing after
+the download). You're ready when `mtg data status` reports a card count.
+
+## 3. Use it with Claude Code
+
+Open this folder in Claude Code (`claude` in the project directory, or the VS Code extension) and
+just ask. Claude automatically reads [CLAUDE.md](CLAUDE.md) and the domain skills, runs the right
+`mtg` commands, and interprets the output for you. Example asks:
+
+- *"Import my collection from `samples/collection.csv`."*
+- *"Load the deck in `samples/MyDeck.txt`, analyze it, and tell me what to upgrade under $30."*
+- *"Simulate my deck — how consistent are my opening hands and when does my commander land?"*
+- *"Run a 4-player battle between these decks and explain who wins and why."*
+- *"What happens when Card A and Card B interact? Cite the rulings."*
+- *"Build me a deck around <commander> from cards I own, and a shopping list for the gaps."*
+- *"After tonight's game, log the result so the matchup model learns from it."*
+
+To bring your own data in, drop your exports into [`samples/`](samples/) (decklists from
+Archidekt/Moxfield/Arena/MTGO as `.txt`; collections from ManaBox/Moxfield/Deckbox as `.csv`) — see
+[samples/README.md](samples/README.md). Those files are gitignored and stay on your machine.
+
+## 4. Command reference (optional — for driving it directly)
+
+Claude runs these for you, but you can run any of them yourself. All deck commands accept a saved
+deck name **or** a file path.
+
+| Command | What it does |
+|---|---|
+| `mtg data refresh` / `status` | Download + ingest Scryfall cards & rulings; show DB status |
+| `mtg rules refresh` / `get <n>` / `search <q>` / `glossary <t>` | Comprehensive Rules: refresh, look up a rule + subrules, full-text search, glossary |
+| `mtg card "<name>"` | Look up a card (text, identity, rulings count) |
+| `mtg explain "<card or question>"` | Card text + rulings + relevant rules + combos, or a free-text rules search |
+| `mtg interaction "<a>" "<b>"` | Grounding for how two cards interact (+ any combo between them) |
+| `mtg combos card "<name>"` / `find <deck>` | Combos that use a card; combos present + one-card-away in a deck |
+| `mtg inventory import <csv…>` / `sync` / `show [--card "<name>"]` | Import collection CSV(s); re-merge decks; stats or per-card locations |
+| `mtg deck show <deck>` | Parse + resolve a decklist, report unresolved cards |
+| `mtg deck analyze <deck> [--no-combos]` | Validate + score (legality, categories, curve, bracket, combos) |
+| `mtg deck simulate <deck> [--games N] [--draw]` | Goldfish consistency simulation |
+| `mtg deck recommend <deck> [--budget $] [--no-sim]` | Cuts + adds, EDHREC-blended, sim-aware, budget-capped |
+| `mtg deck build "<commander>" [--budget $] [--owned-only]` | Build a legal 100 from your collection + shopping list |
+| `mtg deck suggest-commanders` | Legal commanders you own, by popularity |
+| `mtg deck guide <deck> \| --all` | Generate a pilot's strategy guide (markdown) |
+| `mtg deck save <name> <file>` / `list` / `remove <name>` / `diff <a> <b>` | Manage saved decks; compare two decklists |
+| `mtg battle <decks…> [--games N] [--calibrate]` | Heuristic 1v1/4-player matchup sim (2–4 decks) |
+| `mtg matchlog add <pod…> --winner <deck>` / `form` / `list` | Record real game results (the corpus the battle sim learns from) |
+
+Run any command with `--help` for its full options.
+
+## Where your data lives & privacy
+
+- Your card database, decks, collection, generated guides, and match log all live under `data/`
+  (and `samples/`), which is **gitignored** — none of it is committed or pushed.
+- The card DB is fully regenerable: delete `data/` and run `mtg data refresh` + `mtg rules refresh`.
+- Only synthetic test fixtures (under `tests/fixtures/`) are tracked — never real collections.
+
+## Keeping up to date
+
+Because you made your copy from a template (not a fork), pull in upstream improvements by adding this
+repo as a second remote and merging when you want updates:
+
+```bash
+git remote add upstream https://github.com/QuackQuackLabs/MTG-Analyzer.git
+git fetch upstream
+git merge upstream/main      # review changes, then keep your local data untouched (it's gitignored)
+```
+
+## Contributing
+
+Found a bug or want a feature in the shared tool? See **[CONTRIBUTING.md](CONTRIBUTING.md)**: fork →
+branch → keep `pytest` / `ruff` / `mypy` green → open a PR against `main`. Read
+[project-plan.md](project-plan.md) and [CLAUDE.md](CLAUDE.md) first — they're the source of truth for
+scope and conventions.
+
+## Tech & status
+
+- **Engine:** Python 3.11+, SQLite, numpy/scipy, httpx, pydantic. A thin FastAPI app exists as a
+  seed for a future web UI; the engine is intentionally UI-agnostic.
+- **Data sources:** [Scryfall](https://scryfall.com/docs/api) (cards, rulings, bulk),
+  [Commander Spellbook](https://commanderspellbook.com/) (combos), EDHREC (recommendation stats).
+- **Status:** feature-complete for local, chat-driven use (Phases 0–8); the battle/matchup simulator
+  (Phase 9) is in active development. Full roadmap in [project-plan.md](project-plan.md).
 
 ## Legal
 
-Card data and images are used under Wizards of the Coast's Fan Content Policy via Scryfall. This is a
-non-commercial, local tool. Not affiliated with or endorsed by Wizards of the Coast or Scryfall.
+Card data and images are used under **Wizards of the Coast's Fan Content Policy** via Scryfall, and
+combo/recommendation data come from Commander Spellbook and EDHREC under their respective terms. This
+is a **non-commercial, local** tool. It does not paywall or redistribute that data — it fetches it at
+runtime for your personal use.
+
+The MTG Analyzer **source code** is licensed under the [MIT License](LICENSE). That license covers
+the code only — **not** the card data, rulings, or images, which remain under their sources' terms.
+
+Magic: The Gathering is © Wizards of the Coast. MTG Analyzer is unofficial Fan Content and is **not
+affiliated with or endorsed by** Wizards of the Coast or Scryfall.
