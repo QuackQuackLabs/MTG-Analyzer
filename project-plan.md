@@ -541,3 +541,15 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   vary with real combo composition (Sauron 9.0→9.6, Tom 7.3→7.7, Galadriel 7.9→8.2; Sméagol stays
   T4.8). 1 mapper test (115 total; ruff+mypy clean). Open: the absolute scaling (combo_turn is
   hardcast-biased-late) and the lone-fast-deck focus harshness are both real-game-calibration items.
+- **2026-06-20** — **Simulator enhancement plan (research-grounded).** Reviewed the full simulation,
+  then ran a 4-track literature review (MTG/CCG game-AI, card-game balance simulation, simulation V&V/
+  calibration without data, multiplayer "politics" modeling) and wrote
+  `docs/simulator-enhancement-plan.md`. Thesis from the research: realism lives in *stochastic
+  structure* not rule detail; derive parameters from deck math (hypergeometric) as *distributions*;
+  a single power scalar cannot make rock-paper-scissors (need an interaction term); evaluate the
+  *metagame* (Nash-averaging + replicator) as a free no-data calibration signal; and honest
+  uncertainty needs *global* SA (LHS/Morris/Sobol), not the current one-knob band, plus
+  Pattern-Oriented-Modeling validation to resist overfitting ~12 params to a few anchors. Roadmap
+  (no data needed for 1–5): D honest-uncertainty → A stochastic-grounding → E POM harness → F
+  politics-consolidation → C metagame-layer → B intransitivity → G/H robustness+data. Tracked as the
+  Phase 9 → "Phase 10 (simulator realism & calibration)" frontier.
