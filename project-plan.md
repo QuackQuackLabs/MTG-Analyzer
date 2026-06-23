@@ -6,8 +6,9 @@
 > **Status: Phases 0–8 complete; Phase 9 (battle simulator) in progress (A+B shipped, C calibration
 > open).** Feature-complete for local, chat-driven use (analyze, recommend, simulate,
 > build-from-collection, combo/interaction Q&A, **collection management + strategy guides**, and a
-> heuristic **battle/matchup simulator**; 111 tests, ruff+mypy clean). Active work: Phase 9 calibration
-> (§4). Deferred: the web app (publishing, §7). Primary interface is chat via Claude Code.
+> heuristic **battle/matchup simulator** with **combo-aware clocks** (turn-to-combo → battle clock);
+> 115 tests, ruff+mypy clean). Active work: Phase 9 real-game calibration (§4). Deferred: the web app
+> (publishing, §7). Primary interface is chat via Claude Code.
 
 ## 1. Vision
 
@@ -186,7 +187,19 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       weighs sim signals (slow commander or high screw → boosts ramp priority, with an explanatory
       note). `apply_swaps` builds the hypothetical post-swap deck. Sub-`band` deltas shown as "≈ same"
       to avoid labeling sim noise. *Sauron: swaps pull commander median turn 7 → 6.* `--no-sim` to skip.
-- [ ] turn-to-combo metric; sim charts (deferred with the web UI).
+- [x] **turn-to-combo metric** (combo-awareness Layer 1): the goldfish sim tracks the turn any combo
+      assembles — pieces drawn (or tutored), commander pieces free from the command zone, redundancy =
+      earliest across all combos, mana-gated by the priciest piece. `simulate(deck, combos=…)` →
+      `SimResult.combo_turn`/`combo_count`; shown by `mtg deck simulate` (`--no-combos` to skip).
+      Reveals real structure: Tom assembles ~T8 (6 tutors), while Sméagol's 8 *shared-piece* variants
+      don't beat a clean 2-card combo (~T11). 3 tests.
+- [x] **combo-awareness Layer 2**: `build_profile` now grounds a *non-aggro* combo deck's battle clock
+      in its goldfish `combo_turn` (blended with the archetype estimate, since `combo_turn` assumes
+      hardcasting; aggro/cheat decks keep their faster combat clock), and combo redundancy tightens
+      `clock_sd`. `BattleProfile.combo_count` added; the battle CLI now passes combos to the goldfish.
+      Clocks vary with actual combo composition instead of a flat archetype constant (Sauron 9.0→9.6,
+      Tom 7.3→7.7, Sméagol stays T4.8). *Absolute scaling is the calibration target (real-game fit).*
+- [ ] sim charts (deferred with the web UI).
 
 ### Phase 6 — Deck construction from inventory  `[x]`
 - [x] **`recommend/builder.py`**: `build_deck(commander, owned, db, edhrec_cards, *, budget,
@@ -502,3 +515,29 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   pod → prompt winner/died-first/turn/method → summary + confirm → save. Shares `_record_game` with
   `add`; selection parsing factored into a pure `_select_indices` and the flow is unit-tested via
   injected I/O. 111 tests, ruff+mypy clean.
+- **2026-06-20** — **Combo-awareness Layer 1 (turn-to-combo metric).** The battle sim only knew a
+  binary `has_combo`; the goldfish knew nothing. Extended the goldfish to track combo *assembly*:
+  `DeckProfile` now carries per-card `oracle_ids`+`is_tutor`; `_compile_combos` turns detected combos
+  into specs (non-commander pieces to draw, commander-piece flag, mana gate); `_play_out` records the
+  first turn a combo is assemblable (pieces drawn or tutored, commander castable, mana ≥ priciest
+  piece). New `SimResult.combo_turn`/`combo_count`, shown by `mtg deck simulate`. Grounded + revealing:
+  Tom ~T8 (6 tutors) vs Sméagol ~T11 — its 8 combos share the Dúnedain Rangers piece, so redundancy
+  does not speed assembly (confirms the "variants of one engine" read). 3 tests (114 total); clean.
+  Layer 2 — wire `combo_turn`/redundancy into the battle-sim clock — is the next step.
+- **2026-06-20** — **Reconciled the dynamic-threat rework with the "pod blunts fast combo" invariant.**
+  The new board/card-advantage/life live-threat model (good intent: react to the real leader) had
+  diluted static threat so a fast combo was no longer the consensus archenemy → it won pods ~96-99%,
+  breaking 2 anchor tests. Added `THREAT_COMBO_IMMINENCE_W` — an *online* combo deck (gated by board
+  development, so "about to combo off", not flat "fastest = scariest") spikes as the archenemy — and
+  raised `ARCHENEMY_ANSWERERS` 2→3 (an imminent lethal draws every able opponent, as the anchor's own
+  comment intends). With the concurrent `THREAT_CARDADV_W` sweep (0.55→0.1), all 14 battle tests pass;
+  anchor combo blunted to ~34%% (was 96%%); LOTR pod sensible (Galadriel 31 / Tom 29 / Sauron 24 /
+  Henzie 17, Henzie the over-focused archenemy at ~90%%). 114 tests, ruff+mypy clean.
+- **2026-06-20** — **Combo-awareness Layer 2 (combo-grounded battle clocks).** Wired the goldfish
+  `combo_turn`/`combo_count` into `build_profile`: a non-aggro combo deck's clock is now blended
+  toward its measured assembly turn (`COMBO_CLOCK_W=0.35`) and redundancy tightens `clock_sd`; aggro/
+  cheat decks keep their faster combat clock (the hardcast `combo_turn` would wrongly slow a blitzed
+  combo). Battle CLI passes combos to the goldfish; `BattleProfile.combo_count` added. Clocks now
+  vary with real combo composition (Sauron 9.0→9.6, Tom 7.3→7.7, Galadriel 7.9→8.2; Sméagol stays
+  T4.8). 1 mapper test (115 total; ruff+mypy clean). Open: the absolute scaling (combo_turn is
+  hardcast-biased-late) and the lone-fast-deck focus harshness are both real-game-calibration items.

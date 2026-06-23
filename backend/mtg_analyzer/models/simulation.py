@@ -6,10 +6,12 @@ from pydantic import BaseModel
 
 
 class CommanderTurnStats(BaseModel):
+    """Distribution of the turn an event first happens (commander cast, or combo assembled)."""
+
     mean: float | None
     median: int | None
-    p90: int | None  # 90% of games cast the commander by this turn
-    never_pct: float  # % of games that couldn't cast it within the simulated turns
+    p90: int | None  # 90% of games reach the event by this turn
+    never_pct: float  # % of games that didn't reach it within the simulated turns
 
 
 class SimResult(BaseModel):
@@ -27,4 +29,6 @@ class SimResult(BaseModel):
     screw_rate: float  # < 2 lands in play through turn 3
 
     commander_turn: CommanderTurnStats | None
+    combo_turn: CommanderTurnStats | None = None  # turn the deck assembles any combo (Layer 1)
+    combo_count: int = 0  # number of distinct combos the deck runs (redundancy signal)
     notes: list[str]

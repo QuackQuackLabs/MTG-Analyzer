@@ -68,3 +68,54 @@ def test_simulate_metrics_are_sane() -> None:
 
 def test_simulation_is_deterministic() -> None:
     assert simulate(_deck(), games=1000, seed=7) == simulate(_deck(), games=1000, seed=7)
+
+
+# --- turn-to-combo (Layer 1) ----------------------------------------------
+from mtg_analyzer.models.combo import Combo, ComboCard  # noqa: E402
+
+
+def _combo_deck(n_pieces: int, *, tutors: int = 0, piece_cmc: float = 2.0) -> ResolvedDeck:
+    cmd = _card("Cmdr", type_line="Legendary Creature", cmc=3.0, oracle_id="cmdr")
+    land = _card("Waste", type_line="Basic Land — Waste", cmc=0.0, oracle_id="waste")
+    pieces = [_card(f"P{i}", cmc=piece_cmc, oracle_id=f"p{i}") for i in range(n_pieces)]
+    tutor = _card("Tutor", cmc=1.0, oracle_id="tutor",
+                  oracle_text="Search your library for a card.")
+    filler = _card("Filler", cmc=3.0, oracle_id="filler")
+    n_land = 38
+    used = n_land + n_pieces + tutors
+    entries = [_entry(cmd, 1, "commander"), _entry(land, n_land), _entry(filler, 99 - used)]
+    entries += [_entry(p, 1) for p in pieces]
+    if tutors:
+        entries.append(_entry(tutor, tutors))
+    return ResolvedDeck(name="Combo", entries=entries)
+
+
+def _combo(piece_ids: list[str]) -> Combo:
+    return Combo(id="c", produces=["Win"], identity="C", requires=[],
+                 uses=[ComboCard(oracle_id=i, name=i.upper()) for i in piece_ids])
+
+
+def test_combo_turn_reported_only_with_combos() -> None:
+    deck = _combo_deck(2)
+    combo = _combo(["p0", "p1"])
+    assert simulate(deck, games=1, seed=1).combo_turn is None  # no combos passed -> no metric
+    r = simulate(deck, combos=[combo], games=3000, seed=1)
+    assert r.combo_count == 1 and r.combo_turn is not None
+    assert r.combo_turn.median is not None and 1 <= r.combo_turn.median <= 15
+
+
+def test_fewer_pieces_assemble_sooner() -> None:
+    two = simulate(_combo_deck(2), combos=[_combo(["p0", "p1"])], games=4000, seed=1)
+    four = simulate(_combo_deck(4), combos=[_combo(["p0", "p1", "p2", "p3"])], games=4000, seed=1)
+    assert two.combo_turn and four.combo_turn
+    assert two.combo_turn.mean is not None and four.combo_turn.mean is not None
+    assert two.combo_turn.mean < four.combo_turn.mean  # drawing 2 singletons beats drawing 4
+
+
+def test_tutors_speed_assembly() -> None:
+    combo = _combo(["p0", "p1", "p2"])
+    none = simulate(_combo_deck(3, tutors=0), combos=[combo], games=4000, seed=1)
+    some = simulate(_combo_deck(3, tutors=4), combos=[combo], games=4000, seed=1)
+    assert none.combo_turn and some.combo_turn
+    assert none.combo_turn.mean is not None and some.combo_turn.mean is not None
+    assert some.combo_turn.mean < none.combo_turn.mean  # tutors stand in for missing pieces

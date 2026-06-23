@@ -20,6 +20,7 @@ class BattleProfile(BaseModel):
     sweepers: int  # board wipes
     card_advantage: int  # draw-engine density (refuels interaction/threats)
     has_combo: bool
+    combo_count: int = 0  # number of distinct combos (redundancy; from the goldfish combo scan)
     tutors: int
     threat_level: float  # 0..~10 scalar for target/answer focusing
     notes: list[str] = []

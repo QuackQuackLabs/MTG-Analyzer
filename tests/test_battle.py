@@ -10,8 +10,13 @@ Two layers:
 
 from __future__ import annotations
 
+from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.models.battle import BattleProfile
-from mtg_analyzer.simulation.battle import calibrate_match, simulate_match
+from mtg_analyzer.models.card import Card
+from mtg_analyzer.models.combo import Combo, ComboCard
+from mtg_analyzer.models.deck import ResolvedDeck, ResolvedEntry
+from mtg_analyzer.models.simulation import CommanderTurnStats, SimResult
+from mtg_analyzer.simulation.battle import build_profile, calibrate_match, simulate_match
 
 
 def prof(name: str, **kw: object) -> BattleProfile:
@@ -71,6 +76,48 @@ def test_pod_blunts_fast_combo_vs_1v1() -> None:
     assert combo_pod < combo_duel
     # Archenemy flagged on the top threat in a pod.
     assert any(d.archenemy_rate > 0 for d in pod.decks)
+
+
+def _bp_card(name: str, **kw: object) -> Card:
+    base: dict[str, object] = {"id": name, "oracle_id": name, "name": name, "layout": "normal",
+                               "cmc": 2.0, "type_line": "Artifact", "oracle_text": "",
+                               "color_identity": [], "legalities": {"commander": "legal"}}
+    base.update(kw)
+    return Card.model_validate(base)
+
+
+def _bp_inputs(combo_turn: float | None, combo_count: int) -> tuple[ResolvedDeck, object, SimResult]:
+    cmd = _bp_card("Cmdr", type_line="Legendary Creature", cmc=5.0)
+    deck = ResolvedDeck(name="d", entries=[
+        ResolvedEntry(quantity=1, section="commander", requested_name="Cmdr", card=cmd),
+        ResolvedEntry(quantity=60, section="main", requested_name="Rock", card=_bp_card("Rock")),
+        ResolvedEntry(quantity=39, section="main", requested_name="Land",
+                      card=_bp_card("Land", type_line="Land", cmc=0.0)),
+    ])
+    combo = Combo(id="c", produces=["Win"], identity="C", requires=[],
+                  uses=[ComboCard(oracle_id="Rock", name="Rock")])
+    report = analyze(deck, included_combos=[combo])
+    cb = (CommanderTurnStats(mean=combo_turn, median=int(combo_turn), p90=int(combo_turn) + 2,
+                             never_pct=0.0) if combo_turn is not None else None)
+    sim = SimResult(games=1, on_play=True, land_count=39, ramp_count=0, commander_cmc=5,
+                    avg_lands_in_opening=2.8, p_keepable_hand=0.8, p_three_plus_lands_exact=0.5,
+                    avg_mulligans=0.2, flood_rate=0.05, screw_rate=0.05,
+                    commander_turn=CommanderTurnStats(mean=5.0, median=5, p90=7, never_pct=0.0),
+                    combo_turn=cb, combo_count=combo_count, notes=[])
+    return deck, report, sim
+
+
+def test_layer2_combo_clock_grounds_in_assembly() -> None:
+    # A non-aggro combo deck's clock should be pulled toward its measured assembly turn, and combo
+    # redundancy should tighten the variance.
+    deck, report, sim_with = _bp_inputs(9.0, 3)
+    _, _, sim_without = _bp_inputs(None, 0)
+    p_with = build_profile("D", deck, report, sim_with)  # type: ignore[arg-type]
+    p_without = build_profile("D", deck, report, sim_without)  # type: ignore[arg-type]
+    assert p_with.archetype != "aggro"            # combo archetype (no creatures + combo present)
+    assert p_with.clock_mean > p_without.clock_mean  # combo_turn (9) pulled the clock later than 5+2
+    assert p_with.clock_sd < p_without.clock_sd      # 3 combos tightened the variance
+    assert p_with.combo_count == 3
 
 
 def test_band_brackets_point_estimate() -> None:

@@ -482,9 +482,10 @@ def _cmd_deck_simulate(args: argparse.Namespace) -> int:
     db = CardDatabase()
     try:
         deck = resolve_deck(db, parsed)
+        combos = None if args.no_combos else _find_deck_combos(deck)
     finally:
         db.close()
-    r = simulate(deck, games=args.games, on_play=not args.draw)
+    r = simulate(deck, combos=combos, games=args.games, on_play=not args.draw)
 
     play = "on the play" if r.on_play else "on the draw"
     print(f"Goldfish simulation — {r.games:,} games ({play})")
@@ -503,6 +504,13 @@ def _cmd_deck_simulate(args: argparse.Namespace) -> int:
               f"90% by turn {ct.p90}")
         if ct.never_pct:
             print(f"  not cast within {15} turns: {ct.never_pct}%")
+    if r.combo_turn:
+        cb = r.combo_turn
+        plural = "combo" if r.combo_count == 1 else f"{r.combo_count} combos"
+        print(f"\nTurn a combo comes together ({plural}): median {cb.median}, mean {cb.mean}, "
+              f"90% by turn {cb.p90}")
+        if cb.never_pct:
+            print(f"  not assembled within 15 turns: {cb.never_pct}%")
     for note in r.notes:
         print(f"  • {note}")
     print("\n(Approximate mana model: single mana pool, no colored-mana requirements.)")
@@ -520,7 +528,7 @@ def _cmd_battle(args: argparse.Namespace) -> int:
             deck = resolve_deck(db, parse_deck(load_deck_text(name)))
             combos = [] if args.no_combos else _find_deck_combos(deck)
             report = analyze(deck, included_combos=combos)
-            sim = simulate(deck, games=args.sim_games)
+            sim = simulate(deck, combos=combos, games=args.sim_games)
             profiles.append(build_profile(Path(name).stem, deck, report, sim))
     finally:
         db.close()
@@ -1137,6 +1145,8 @@ def main(argv: list[str] | None = None) -> int:
     d_sim.add_argument("file")
     d_sim.add_argument("--games", type=int, default=10_000)
     d_sim.add_argument("--draw", action="store_true", help="simulate on the draw (default: on the play)")
+    d_sim.add_argument("--no-combos", action="store_true",
+                       help="skip the live combo lookup / turn-to-combo metric (faster, offline)")
     d_sim.set_defaults(func=_cmd_deck_simulate)
 
     battle = sub.add_parser("battle", help="heuristic 1v1/4-player matchup sim (NOT a rules engine)")

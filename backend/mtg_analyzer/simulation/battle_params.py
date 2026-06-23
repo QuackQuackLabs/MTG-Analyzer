@@ -9,7 +9,7 @@ into battle.py; add them here with a comment.
 from __future__ import annotations
 
 START_LIFE = 40
-MAX_TURNS = 20
+MAX_TURNS = 24
 
 # Archetype -> (turns after the engine/commander is online until the deck can win, sd).
 # Added on top of the goldfish "commander online" mean to get a kill-turn ("clock").
@@ -43,7 +43,7 @@ ANSWER_CLOCK_PENALTY = 2.2  # turns a deck is set back when its win attempt is a
 # pre-identified archenemy than to a trailing player — focused, but not a death sentence.
 POLITICS_ARCHENEMY_ANSWER = 0.85  # answer P multiplier when a defender flagged the attacker its #1
 POLITICS_NONARCH_ANSWER = 0.5  # multiplier when a defender only reacts out of self-preservation
-ARCHENEMY_ANSWERERS = 2  # cap on coordinated answerers (the players who voted the attacker #1)
+ARCHENEMY_ANSWERERS = 3  # cap on coordinated answerers: an imminent threat draws every able opponent
 # Proximity dominates: the table fears whoever is *about to win* over abstract power, so the
 # consensus archenemy shifts across the game as different decks approach their kill turns.
 THREAT_PROXIMITY_W = 2.6  # how much being near your own kill-turn raises your live threat
@@ -68,6 +68,27 @@ INEVITABILITY_WEIGHTS: dict[str, float] = {"card_advantage": 1.0, "combo": 3.0, 
 THREAT_BRACKET_W = 1.0
 THREAT_COMBO_W = 2.0
 THREAT_SPEED_W = 1.5  # weight on (how soon) the deck's clock is
+
+# Dynamic (turn-by-turn) live-threat terms: the table re-reads who is actually winning each turn
+# from current board/resources/life rather than a static pre-game power number. This is what makes
+# politics gang up on the real leader instead of the (inverted) "fastest = scariest" heuristic.
+THREAT_STATIC_W = 0.3      # how much the pre-game static threat_level still counts (diluted)
+THREAT_CARDADV_W = 0.1     # tuned via sweep: real win-driver, but light so it does not invert
+THREAT_BOARD_W = 2.0       # tuned via sweep: board development draws heat
+THREAT_BOARD_DEV_STEEP = 1.5  # logistic steepness for the online/board-development proxy
+THREAT_LIFE_W = 0.08       # tuned via sweep: ahead-on-life = bigger target
+# A combo deck that is *online* (set up, past its clock) threatens a sudden table-wide loss, so it
+# draws the heat — gated by board-development so it's "whoever's about to combo off", NOT a flat
+# "fastest deck is always the archenemy". This is what keeps a pod ganging up on a fast combo.
+THREAT_COMBO_IMMINENCE_W = 14.0
+
+# Combo-awareness Layer 2: ground a combo deck's clock in its goldfish-measured assembly turn
+# (`SimResult.combo_turn`) instead of a flat archetype offset. The goldfish assumes hardcasting +
+# natural draw, so it's honest for SETUP/combo decks but overstates aggro/cheat decks (a blitzed or
+# reanimated combo creature) — so we blend (not replace) and skip the "aggro" archetype entirely.
+COMBO_CLOCK_W = 0.35  # weight on the grounded combo_turn vs. the archetype-offset estimate
+COMBO_REDUNDANCY_SD = 0.1  # clock_sd reduction per extra combo line (more ways to assemble = steadier)
+COMBO_MIN_SD = 0.9  # floor so redundancy can't make a deck implausibly deterministic
 
 # Sensitivity band: re-run with the interaction-answer base scaled by +/- this fraction.
 SENSITIVITY = 0.25

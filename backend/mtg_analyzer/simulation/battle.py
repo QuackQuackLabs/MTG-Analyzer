@@ -64,6 +64,16 @@ def build_profile(
     off, sd = P.ARCHETYPE_CLOCK.get(archetype, P.DEFAULT_CLOCK)
     clock_mean = round(online + off, 2)
 
+    # Combo-awareness (Layer 2): for non-aggro combo decks, ground the clock in the goldfish-measured
+    # assembly turn (blended with the archetype estimate, since combo_turn assumes hardcasting), and
+    # let combo redundancy tighten the variance. Aggro/cheat decks keep their faster combat clock —
+    # the hardcast combo_turn would wrongly slow a blitzed/reanimated combo.
+    combo_turn = sim.combo_turn.mean if sim and sim.combo_turn and sim.combo_turn.mean is not None else None
+    combo_count = sim.combo_count if sim else 0
+    if has_combo and combo_turn is not None and archetype != "aggro":
+        clock_mean = round(P.COMBO_CLOCK_W * combo_turn + (1 - P.COMBO_CLOCK_W) * clock_mean, 2)
+        sd = round(max(P.COMBO_MIN_SD, sd - P.COMBO_REDUNDANCY_SD * max(0, combo_count - 1)), 2)
+
     interaction = counts.get("counterspell", 0) + counts.get("removal", 0)
     tutors = counts.get("tutor", 0)
     card_adv = counts.get("draw", 0)
@@ -88,6 +98,7 @@ def build_profile(
         sweepers=counts.get("board_wipe", 0),
         card_advantage=card_adv,
         has_combo=has_combo,
+        combo_count=combo_count,
         tutors=tutors,
         threat_level=round(threat, 2),
         notes=notes,
@@ -124,9 +135,32 @@ def _play_match(
         return min(P.INTERACTION_ANSWER_MAX, answer_base + P.INTERACTION_ANSWER_PER_PT * profiles[j].interaction)
 
     def live_threat(j: int, turn: int) -> float:
-        # Base power-level threat + a bump for being near your own kill turn (about to win).
-        prox = max(0.0, P.THREAT_PROXIMITY_WINDOW - abs(turn - (profiles[j].clock_mean + delay[j])))
-        return profiles[j].threat_level + P.THREAT_PROXIMITY_W * prox
+        # Turn-by-turn threat: the table re-reads who is actually winning *right now* from board
+        # development, resources, and life lead — not just a static pre-game power number. Keeps a
+        # diluted static floor, then adds the dynamic signals that track the real leader.
+        p = profiles[j]
+        eff = p.clock_mean + delay[j]
+        # Board development: how far past its setup turn the deck is (online = board deployed),
+        # amplified by its resource level (card advantage = more on the battlefield).
+        online = _logistic((turn - eff) / P.THREAT_BOARD_DEV_STEEP)
+        board = P.THREAT_BOARD_W * online * (1.0 + 0.08 * p.card_advantage)
+        # Life lead over the rest of the living table → ahead-on-life players are bigger targets.
+        living_life = [life[k] for k in range(n) if alive[k]]
+        avg_life = sum(living_life) / len(living_life) if living_life else life[j]
+        life_lead = P.THREAT_LIFE_W * (life[j] - avg_life)
+        # Proximity to their own kill turn (about to win) still spikes fear.
+        prox = max(0.0, P.THREAT_PROXIMITY_WINDOW - abs(turn - eff))
+        # An online combo deck threatens a sudden table-wide loss → it draws the heat (gated by
+        # board development, so it's "about to combo off", not a flat "fastest = scariest").
+        combo_imminence = P.THREAT_COMBO_IMMINENCE_W * online if p.has_combo else 0.0
+        return (
+            P.THREAT_STATIC_W * p.threat_level
+            + P.THREAT_CARDADV_W * p.card_advantage
+            + board
+            + life_lead
+            + P.THREAT_PROXIMITY_W * prox
+            + combo_imminence
+        )
 
     def assess(turn: int) -> tuple[list[int], int]:
         """Each living player privately scores opponents and votes its #1 threat; the politicking
