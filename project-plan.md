@@ -563,3 +563,14 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   <= commander-online + COMBO_PRIMARY_GAP" test (reclassifies post-overhaul Galadriel midrange→combo).
   Result: the LOTR pod joint band is far wider/honest (Henzie 22%% but [14%%–33%%] vs the old ~[16-19]),
   exposing real parametric uncertainty. 4 tests (118 total); ruff+mypy clean.
+- **2026-06-20** — **Commander politics model (research-grounded, workstream F plan).** Two-track
+  community-strategy review (casual/mid + cEDH) → `docs/commander-politics-model.md`. Headline
+  empirical anchor (50 logged games): the **archenemy seat wins ~11%**, not the 25% fair share — the
+  strong/fast deck should win *below* 1/N, and the under-the-radar deck inherits wins. This resolves
+  the A1 question: A1 (realistic per-game timing) is correct but exposed that our gang-up was an
+  artifact of many telegraphed attempts; the fix is the real EDH politics model — perceived-threat ≠
+  true-equity, reputation/lightning-rod focus, table-wide answer check with equity-gated +
+  free-rider-discounted willingness, attrition (winner spends fewest answers), go-first penalty,
+  spoiler-on-leader, power-preset pacing (casual ~10-13 / cEDH ~5). Plan: F1 perception+reputation →
+  F2 equity/free-rider answering → F3 standoff/spoiler → F4 protection → F5 presets+POM tests.
+  A1 code change is staged uncommitted pending F1 (A1 alone makes the fast deck lead, which is wrong).
