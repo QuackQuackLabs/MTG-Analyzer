@@ -40,6 +40,7 @@ from mtg_analyzer.recommend.edhrec import EdhrecCache, EdhrecClient
 from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
 from mtg_analyzer.simulation.battle import build_profile, calibrate_match, simulate_match
 from mtg_analyzer.simulation.goldfish import simulate
+from mtg_analyzer.simulation.sensitivity import analyze_sensitivity
 from mtg_analyzer.models.qa import CardKnowledge
 from mtg_analyzer.rules.comprehensive import download_rules, parse_rules_text
 from mtg_analyzer.rules.qa import explain_card, explain_interaction, search_knowledge
@@ -544,6 +545,22 @@ def _cmd_battle(args: argparse.Namespace) -> int:
         print("\n  (Spread across rows = how sensitive the result is to the interaction assumption.)")
         return 0
 
+    if args.sensitivity:
+        print("Global sensitivity — joint band over ALL tunable params (Latin Hypercube over priors),\n"
+              "the honest uncertainty vs. the default interaction-only band:\n")
+        sens = analyze_sensitivity(profiles, samples=args.sens_samples, games=max(400, args.games // 3),
+                                   seed=args.seed)
+        print(f"  Win-rate band [5th–95th pct] across {sens.samples} parameter draws:")
+        for p in profiles:
+            lo, mid, hi = sens.band[p.name]
+            print(f"    {p.name:16} {mid:5.0%}  [{lo:.0%}–{hi:.0%}]")
+        print("\n  Parameters driving the spread (|rank-corr| with the most-affected deck):")
+        for name, imp in sens.importance[:6]:
+            bar = "█" * int(round(imp * 20))
+            print(f"    {name:26} {imp:.2f} {bar}")
+        print("\n  (Parametric uncertainty under expert priors — NOT a calibrated prediction.)")
+        return 0
+
     result = simulate_match(profiles, games=args.games, seed=args.seed)
     mode = "1v1" if result.players == 2 else f"{result.players}-player pod"
     print(f"Battle simulation — {mode}, {result.games:,} games (avg game ends ~turn "
@@ -554,7 +571,7 @@ def _cmd_battle(args: argparse.Namespace) -> int:
         print(f"  {p.name:16} {p.archetype:9} clock~T{p.clock_mean:<4.1f} "
               f"interaction {p.interaction:<2} draw {p.card_advantage:<2} tutors {p.tutors}{tag}")
 
-    print("\nWin rate  [sensitivity band]   (decks sorted by win rate):")
+    print("\nWin rate  [interaction-only band — run --sensitivity for the honest joint band]:")
     for d in sorted(result.decks, key=lambda x: -x.win_rate):
         band = f"[{d.win_rate_low:.0%}–{d.win_rate_high:.0%}]"
         wt = f"win ~T{d.avg_win_turn}" if d.avg_win_turn is not None else ""
@@ -1159,6 +1176,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip live combo lookup (faster / offline)")
     battle.add_argument("--calibrate", action="store_true",
                         help="sweep the interaction assumption + show model health instead of one result")
+    battle.add_argument("--sensitivity", action="store_true",
+                        help="honest joint uncertainty band: global SA over ALL tunable params (priors)")
+    battle.add_argument("--sens-samples", type=int, default=64,
+                        help="Latin-Hypercube samples for --sensitivity")
     battle.set_defaults(func=_cmd_battle)
 
     matchlog = sub.add_parser(

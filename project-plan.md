@@ -553,3 +553,13 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   (no data needed for 1–5): D honest-uncertainty → A stochastic-grounding → E POM harness → F
   politics-consolidation → C metagame-layer → B intransitivity → G/H robustness+data. Tracked as the
   Phase 9 → "Phase 10 (simulator realism & calibration)" frontier.
+- **2026-06-20** — **Enhancement plan PR1: honest uncertainty + principled archetype.** (a) §D1:
+  `battle_params.PRIORS` registry — the ~12 tunable constants now carry documented (low,high) prior
+  ranges. (b) §D2: `simulation/sensitivity.py` — `param_overrides` context manager + Latin-Hypercube
+  global SA over all priors → a JOINT win-rate band, with correlation-based screening of which params
+  drive the spread (Morris/Sobol the documented next step). (c) §D3: `mtg battle --sensitivity` prints
+  the honest joint band + top drivers; the default band is relabeled "interaction-only". (d) §A4:
+  replaced the creature-count archetype classifier with a principled "combo is primary iff combo_turn
+  <= commander-online + COMBO_PRIMARY_GAP" test (reclassifies post-overhaul Galadriel midrange→combo).
+  Result: the LOTR pod joint band is far wider/honest (Henzie 22%% but [14%%–33%%] vs the old ~[16-19]),
+  exposing real parametric uncertainty. 4 tests (118 total); ruff+mypy clean.

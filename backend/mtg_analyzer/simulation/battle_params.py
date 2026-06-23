@@ -90,8 +90,34 @@ COMBO_CLOCK_W = 0.35  # weight on the grounded combo_turn vs. the archetype-offs
 COMBO_REDUNDANCY_SD = 0.1  # clock_sd reduction per extra combo line (more ways to assemble = steadier)
 COMBO_MIN_SD = 0.9  # floor so redundancy can't make a deck implausibly deterministic
 
-# Sensitivity band: re-run with the interaction-answer base scaled by +/- this fraction.
+COMBO_PRIMARY_GAP = 4.0  # combo is the deck's PRIMARY plan if combo_turn <= commander-online + this
+
+# Sensitivity band (legacy one-knob): re-run with the interaction-answer base scaled by +/- this.
+# NOTE: this perturbs ONE parameter — it understates true uncertainty. The honest joint band comes
+# from global SA over PRIORS below (simulation/sensitivity.py); the legacy band is kept only as a
+# fast default and is labeled as interaction-only in the output.
 SENSITIVITY = 0.25
+
+# --- Expert-elicited priors for global sensitivity analysis (enhancement plan §D1) -----------------
+# The module constants above are the *best-guess* point values; PRIORS gives each tunable parameter a
+# plausible (low, high) range. Global SA (LHS/Morris) samples these jointly to produce an honest
+# joint-parametric uncertainty band — instead of perturbing a single knob. Ranges are designer
+# estimates (~±40% or domain-sensible), to be replaced by data-fit posteriors when outcomes exist.
+# Discrete params (e.g. ARCHENEMY_ANSWERERS) are intentionally excluded from the continuous sweep.
+PRIORS: dict[str, tuple[float, float]] = {
+    "INTERACTION_ANSWER_BASE": (0.20, 0.42),
+    "INTERACTION_ANSWER_PER_PT": (0.03, 0.06),
+    "CARD_ADVANTAGE_REFILL": (0.02, 0.07),
+    "ANSWER_CLOCK_PENALTY": (1.5, 3.0),
+    "POLITICS_ARCHENEMY_ANSWER": (0.70, 0.95),
+    "POLITICS_NONARCH_ANSWER": (0.35, 0.65),
+    "THREAT_PROXIMITY_W": (1.5, 3.5),
+    "THREAT_COMBO_IMMINENCE_W": (8.0, 18.0),
+    "THREAT_CARDADV_W": (0.05, 0.30),
+    "THREAT_BOARD_W": (1.0, 3.5),
+    "THREAT_LIFE_W": (0.04, 0.12),
+    "COMBO_CLOCK_W": (0.20, 0.50),
+}
 
 # Explainability thresholds: when a deck's per-line attribution should call out politics pressure.
 EXPLAIN_ARCHENEMY_HI = 0.40  # held the archenemy role this share of turns → "drew the table"

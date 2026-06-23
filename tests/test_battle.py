@@ -16,7 +16,9 @@ from mtg_analyzer.models.card import Card
 from mtg_analyzer.models.combo import Combo, ComboCard
 from mtg_analyzer.models.deck import ResolvedDeck, ResolvedEntry
 from mtg_analyzer.models.simulation import CommanderTurnStats, SimResult
-from mtg_analyzer.simulation.battle import build_profile, calibrate_match, simulate_match
+from mtg_analyzer.simulation import battle_params as P
+from mtg_analyzer.simulation.battle import _archetype, build_profile, calibrate_match, simulate_match
+from mtg_analyzer.simulation.sensitivity import analyze_sensitivity, param_overrides
 
 
 def prof(name: str, **kw: object) -> BattleProfile:
@@ -118,6 +120,33 @@ def test_layer2_combo_clock_grounds_in_assembly() -> None:
     assert p_with.clock_mean > p_without.clock_mean  # combo_turn (9) pulled the clock later than 5+2
     assert p_with.clock_sd < p_without.clock_sd      # 3 combos tightened the variance
     assert p_with.combo_count == 3
+
+
+def test_archetype_combo_primary_only_when_assembled_on_curve() -> None:
+    # A combo that assembles near the deck's tempo is the primary plan; one that lands far later is a
+    # backup, so a creature-heavy fast deck is classified by its faster plan instead.
+    assert _archetype(30, 3.0, combo_turn=4.0, counts={}, has_combo=True) == "combo"
+    assert _archetype(30, 3.0, combo_turn=11.0, counts={}, has_combo=True) == "aggro"
+
+
+def test_param_overrides_restores() -> None:
+    before = P.THREAT_BOARD_W
+    with param_overrides({"THREAT_BOARD_W": before + 5.0}):
+        assert P.THREAT_BOARD_W == before + 5.0
+    assert P.THREAT_BOARD_W == before  # restored on exit
+
+
+def test_sensitivity_band_and_importance() -> None:
+    decks = [prof("A", archetype="combo", clock_mean=6.0, has_combo=True, tutors=3),
+             prof("B", clock_mean=8.0, interaction=10, card_advantage=10)]
+    res = analyze_sensitivity(decks, samples=24, games=300, seed=1)
+    for name in ("A", "B"):
+        lo, mid, hi = res.band[name]
+        assert lo <= mid <= hi          # well-formed band
+        assert hi - lo > 0.0            # the joint prior produces real spread (not a point)
+    assert len(res.importance) == len(P.PRIORS)            # every prior screened
+    vals = [v for _, v in res.importance]
+    assert vals == sorted(vals, reverse=True)              # ranked most-influential first
 
 
 def test_band_brackets_point_estimate() -> None:

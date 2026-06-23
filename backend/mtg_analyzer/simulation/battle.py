@@ -34,10 +34,18 @@ def _creature_count(deck: ResolvedDeck) -> int:
     )
 
 
-def _archetype(creatures: int, online: float, counts: dict[str, int], has_combo: bool) -> str:
+def _archetype(
+    creatures: int, online: float, combo_turn: float | None, counts: dict[str, int], has_combo: bool
+) -> str:
+    """Classify the deck's *primary* win plan. The combo is primary only when it assembles near the
+    deck's natural tempo (combo_turn ≲ commander-online + a small gap) — measured from the goldfish,
+    not guessed from creature count. A deck whose combo lands far later (e.g. a fast aristocrats deck
+    that *can* combo) is classified by its faster plan instead."""
     control = counts.get("counterspell", 0) + counts.get("removal", 0)
-    if has_combo and creatures < 22:
+    if has_combo and combo_turn is not None and combo_turn <= online + P.COMBO_PRIMARY_GAP:
         return "combo"
+    if has_combo and combo_turn is None and creatures < 22:
+        return "combo"  # no goldfish combo signal: fall back to the old creature-light heuristic
     if creatures >= 27 and online <= 4.5:
         return "aggro"
     if control >= 12 and online >= 5:
@@ -59,7 +67,9 @@ def build_profile(
     )
     creatures = _creature_count(deck)
     has_combo = bool(report.combos)
-    archetype = _archetype(creatures, online, counts, has_combo)
+    combo_turn = sim.combo_turn.mean if sim and sim.combo_turn and sim.combo_turn.mean is not None else None
+    combo_count = sim.combo_count if sim else 0
+    archetype = _archetype(creatures, online, combo_turn, counts, has_combo)
 
     off, sd = P.ARCHETYPE_CLOCK.get(archetype, P.DEFAULT_CLOCK)
     clock_mean = round(online + off, 2)
@@ -68,8 +78,6 @@ def build_profile(
     # assembly turn (blended with the archetype estimate, since combo_turn assumes hardcasting), and
     # let combo redundancy tighten the variance. Aggro/cheat decks keep their faster combat clock —
     # the hardcast combo_turn would wrongly slow a blitzed/reanimated combo.
-    combo_turn = sim.combo_turn.mean if sim and sim.combo_turn and sim.combo_turn.mean is not None else None
-    combo_count = sim.combo_count if sim else 0
     if has_combo and combo_turn is not None and archetype != "aggro":
         clock_mean = round(P.COMBO_CLOCK_W * combo_turn + (1 - P.COMBO_CLOCK_W) * clock_mean, 2)
         sd = round(max(P.COMBO_MIN_SD, sd - P.COMBO_REDUNDANCY_SD * max(0, combo_count - 1)), 2)
