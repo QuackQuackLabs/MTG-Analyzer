@@ -139,15 +139,25 @@ def _play_match(
     archenemy_turns = [0] * n  # how many turns each deck was the table's consensus archenemy
     damage_from = [[0.0] * n for _ in range(n)]  # damage_from[k][p]: total k has dealt to p
 
+    # A1 — stochastic grounding: draw each deck's REALIZED kill turn for THIS game from its clock
+    # distribution, so attempts are correlated within the game instead of independent per-turn rolls.
+    # Tutors shift the realized clock earlier (combo-assembly help, capped).
+    game_clock = [
+        max(1.0, float(rng.normal(
+            p.clock_mean - min(P.TUTOR_CLOCK_SHIFT * p.tutors, P.TUTOR_CLOCK_SHIFT_CAP), p.clock_sd)))
+        for p in profiles
+    ]
+
     def answer_prob(j: int) -> float:
         return min(P.INTERACTION_ANSWER_MAX, answer_base + P.INTERACTION_ANSWER_PER_PT * profiles[j].interaction)
 
     def live_threat(j: int, turn: int) -> float:
         # Turn-by-turn threat: the table re-reads who is actually winning *right now* from board
         # development, resources, and life lead — not just a static pre-game power number. Keeps a
-        # diluted static floor, then adds the dynamic signals that track the real leader.
+        # diluted static floor, then adds the dynamic signals that track the real leader. Uses the
+        # deck's REALIZED clock this game (A1) so the table sees who's actually fast, not the average.
         p = profiles[j]
-        eff = p.clock_mean + delay[j]
+        eff = game_clock[j] + delay[j]
         # Board development: how far past its setup turn the deck is (online = board deployed),
         # amplified by its resource level (card advantage = more on the battlefield).
         online = _logistic((turn - eff) / P.THREAT_BOARD_DEV_STEEP)
@@ -205,30 +215,23 @@ def _play_match(
                 continue
             reserve[i] = min(P.INTERACTION_CAP, reserve[i] + profiles[i].card_advantage * P.CARD_ADVANTAGE_REFILL)
 
-            eff_clock = profiles[i].clock_mean + delay[i]
-            z = P.ATTEMPT_STEEPNESS * (turn - eff_clock) / profiles[i].clock_sd
-            p_attempt = _logistic(z)
-            if profiles[i].has_combo:
-                # Tutors speed combo assembly, but only once you're at/near your engine turn —
-                # you can't tutor a win on turn 1. Gate the bonus by readiness around the clock.
-                readiness = _logistic(turn - eff_clock + 1.0)
-                p_attempt += profiles[i].tutors * P.COMBO_ASSEMBLY_PER_TUTOR * readiness
-            p_attempt = min(P.ATTEMPT_CAP, p_attempt)
+            # A1: sharp ramp around the REALIZED kill turn (between-game variance already lives in
+            # game_clock). Once a deck reaches its assembled turn it tries to win; answers push it back
+            # via `delay`. No per-turn re-rolling of "did I draw the combo" — that's fixed per game.
+            eff_clock = game_clock[i] + delay[i]
+            p_attempt = min(P.ATTEMPT_CAP, _logistic(P.INGAME_ATTEMPT_STEEPNESS * (turn - eff_clock)))
             if rng.random() >= p_attempt:
                 continue
 
-            # Who answers is set by the politicking vote: the players who flagged i as their #1
-            # threat commit (coordinated, capped), each at the archenemy rate. If nobody did, only
-            # the single best-equipped opponent reacts out of self-preservation, at the lower rate.
-            voters = [j for j in range(n)
-                      if j != i and alive[j] and reserve[j] >= 1.0 and votes[j] == i]
-            if voters:
-                designated = sorted(voters, key=lambda j: reserve[j], reverse=True)[:P.ARCHENEMY_ANSWERERS]
-                politics = P.POLITICS_ARCHENEMY_ANSWER
-            else:
-                equipped = [j for j in range(n) if j != i and alive[j] and reserve[j] >= 1.0]
-                designated = [max(equipped, key=lambda j: reserve[j])] if equipped else []
-                politics = P.POLITICS_NONARCH_ANSWER
+            # A win ATTEMPT is a visible lethal threat (esp. under A1, where decks go off once at their
+            # realized clock rather than telegraphing over many turns): the table coordinates answers
+            # against it — up to ARCHENEMY_ANSWERERS best-equipped opponents pitch in. If the attacker
+            # was the *pre-identified* archenemy the table was ready (higher rate); a surprise attacker
+            # (not the consensus threat) is still answered, but less effectively.
+            equipped = sorted((j for j in range(n) if j != i and alive[j] and reserve[j] >= 1.0),
+                              key=lambda j: reserve[j], reverse=True)
+            designated = equipped[:P.ARCHENEMY_ANSWERERS]
+            politics = P.POLITICS_ARCHENEMY_ANSWER if i == archenemy else P.POLITICS_NONARCH_ANSWER
             answered = False
             for j in designated:
                 if rng.random() < answer_prob(j) * politics:

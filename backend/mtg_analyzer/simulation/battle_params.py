@@ -22,10 +22,16 @@ ARCHETYPE_CLOCK: dict[str, tuple[float, float]] = {
 }
 DEFAULT_CLOCK: tuple[float, float] = (2.8, 1.4)
 
-# Win-attempt hazard: logistic around the (delayed) clock mean.
-ATTEMPT_STEEPNESS = 1.1
+# Win-attempt model. A1 (stochastic grounding): each game draws the deck's REALIZED kill turn from
+# its clock distribution (between-game variance), then a sharp in-game ramp fires the attempt at/after
+# it — so attempts are correlated within a game ("you either assemble or you don't") instead of
+# independent per-turn rolls that inflate late-game wins. Tutors shift the realized clock earlier.
 ATTEMPT_CAP = 0.97
-COMBO_ASSEMBLY_PER_TUTOR = 0.04  # extra per-turn attempt prob per tutor, for combo decks
+INGAME_ATTEMPT_STEEPNESS = 2.0  # sharpness of the per-game attempt ramp around the realized clock
+TUTOR_CLOCK_SHIFT = 0.12  # turns earlier the realized clock moves per tutor (combo assembly help)
+TUTOR_CLOCK_SHIFT_CAP = 1.5  # max turns earlier tutors can shift the clock
+ATTEMPT_STEEPNESS = 1.1  # (legacy, retained for reference; superseded by the A1 in-game ramp)
+COMBO_ASSEMBLY_PER_TUTOR = 0.04  # (legacy; tutor effect now folded into the realized-clock shift)
 
 # Interaction: a *finite* reserve of "answers" (counters + spot removal), slowly refilled by card
 # advantage. Refill is deliberately < ~1/turn so answers deplete in the late game — otherwise pods
