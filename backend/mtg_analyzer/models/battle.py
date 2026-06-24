@@ -14,8 +14,14 @@ from pydantic import BaseModel
 class BattleProfile(BaseModel):
     name: str
     archetype: str  # combo | aggro | midrange | control | grind
-    clock_mean: float  # ~turn the deck can win, goldfishing
+    clock_mean: float  # ~turn the deck can win, goldfishing (its PRIMARY/attempt clock)
     clock_sd: float
+    # Stage 0.1 — the win-clock decoupled from the deploy/attempt clock. For a deck whose combo is an
+    # INCIDENTAL backup (a non-combo archetype that merely contains a combo), this is the goldfish combo-
+    # assembly turn — strictly later than the deck's combat clock — so it wins by beatdown at clock_mean
+    # and only by combo once the game reaches combo_clock. None ⇒ fall back to clock_mean (combo-primary
+    # decks and synthetic profiles: the attempt IS the combo).
+    combo_clock: float | None = None
     interaction: int  # answer budget = counters + spot removal
     sweepers: int  # board wipes
     card_advantage: int  # draw-engine density (refuels interaction/threats)
@@ -23,6 +29,11 @@ class BattleProfile(BaseModel):
     combo_count: int = 0  # number of distinct combos (redundancy; from the goldfish combo scan)
     tutors: int
     threat_level: float  # 0..~10 scalar for target/answer focusing
+    visibility: float = 1.0  # F1: perception multiplier on true threat (<1 = under-read "quiet shark")
+    protection: int = 0  # F4: free counters / hexproof / "can't be countered" that cancel answers ~1:1
+    # Stage 3c — metagame-knowledge prior: a deck's standing "everyone knows it wins" reputation, fed
+    # back from the simulation's own realized win rate (fictitious-play loop). 0 = no prior knowledge.
+    win_prior: float = 0.0
     notes: list[str] = []
 
 

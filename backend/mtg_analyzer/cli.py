@@ -519,7 +519,12 @@ def _cmd_deck_simulate(args: argparse.Namespace) -> int:
 
 
 def _cmd_battle(args: argparse.Namespace) -> int:
-    if not 2 <= len(args.decks) <= 4:
+    if args.metagame:
+        if len(args.decks) <= args.pod_size:
+            print(f"--metagame needs MORE than {args.pod_size} decks (the pool to draw pods from); "
+                  f"got {len(args.decks)}.", file=sys.stderr)
+            return 1
+    elif not 2 <= len(args.decks) <= 4:
         print("Provide 2 decks (1v1) up to 4 decks (pod).", file=sys.stderr)
         return 1
     db = CardDatabase()
@@ -533,6 +538,24 @@ def _cmd_battle(args: argparse.Namespace) -> int:
             profiles.append(build_profile(Path(name).stem, deck, report, sim))
     finally:
         db.close()
+
+    if args.metagame:
+        from mtg_analyzer.simulation.battle import simulate_metagame
+        meta = simulate_metagame(profiles, pod_size=args.pod_size, games=args.games, seed=args.seed)
+        status = (f"converged in {meta.iterations} passes" if meta.converged
+                  else f"ran {meta.iterations} passes (not yet converged)")
+        print(f"Metagame — all {meta.pods} {meta.pod_size}-deck pods, fictitious-play feedback ({status}).\n"
+              "Assumes an INFORMED table that has learned each deck's power level and targets accordingly.\n"
+              "Power = learned strength (the ranking); archenemy = who the table gangs up on; win rate =\n"
+              "the POLICED outcome (it compresses, because the table correctly answers the strongest deck).\n")
+        print(f"  #  {'Deck':18} {'power':>6}  {'archenemy%':>10}  {'win%':>5}")
+        for d in meta.decks:
+            print(f"  {d.power_rank}  {d.name:18} {d.power_level:>+6.2f}  {d.archenemy_rate:>10.0%}  {d.win_rate:>5.0%}")
+        print(f"\n  (Fair share = {1/meta.pod_size:.0%}. Power >0 = above fair / a known threat the informed "
+              "table gangs up on; <0 = a deck it leaves alone at game start. Under informed play the "
+              "strongest deck draws the most heat and its win rate is policed toward parity — power lives "
+              "in the ranking + archenemy column, NOT in raw win rate.)")
+        return 0
 
     if args.calibrate:
         print("Calibration sweep — win rates vs. interaction-answer base "
@@ -561,7 +584,7 @@ def _cmd_battle(args: argparse.Namespace) -> int:
         print("\n  (Parametric uncertainty under expert priors — NOT a calibrated prediction.)")
         return 0
 
-    result = simulate_match(profiles, games=args.games, seed=args.seed)
+    result = simulate_match(profiles, games=args.games, seed=args.seed, preset=args.preset)
     mode = "1v1" if result.players == 2 else f"{result.players}-player pod"
     print(f"Battle simulation — {mode}, {result.games:,} games (avg game ends ~turn "
           f"{result.avg_game_length})\n")
@@ -1172,6 +1195,9 @@ def main(argv: list[str] | None = None) -> int:
     battle.add_argument("--sim-games", type=int, default=1500,
                         help="goldfish games per deck for the clock estimate")
     battle.add_argument("--seed", type=int, default=1)
+    battle.add_argument("--preset", choices=("casual", "mid", "cedh"),
+                        help="power-level preset: table coordination + threat-read sharpness "
+                             "(casual = poorly-coordinated; cedh = gangs the archenemy hard)")
     battle.add_argument("--no-combos", action="store_true",
                         help="skip live combo lookup (faster / offline)")
     battle.add_argument("--calibrate", action="store_true",
@@ -1180,6 +1206,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="honest joint uncertainty band: global SA over ALL tunable params (priors)")
     battle.add_argument("--sens-samples", type=int, default=64,
                         help="Latin-Hypercube samples for --sensitivity")
+    battle.add_argument("--metagame", action="store_true",
+                        help="pass a POOL of >4 decks: simulate every pod and run the fictitious-play "
+                             "feedback loop so the table targets decks known to win (self-consistent meta)")
+    battle.add_argument("--pod-size", type=int, default=4,
+                        help="pod size for --metagame (default 4)")
     battle.set_defaults(func=_cmd_battle)
 
     matchlog = sub.add_parser(

@@ -1,7 +1,9 @@
 # Commander Politics Model — grounding the sim in how EDH is actually played
 
-**Status:** proposed (workstream F of the [enhancement plan](simulator-enhancement-plan.md)). **Scope:**
-re-base the battle sim's threat-assessment, win-attempt, and "gang-up" mechanics on how real
+**Status:** ✅ **shipped F1–F5** (workstream F; live status in
+[project-plan.md](../project-plan.md) → Phase 9). This doc is the design spec + validation targets;
+the research-rationale companion is [simulator-realism-research.md](simulator-realism-research.md).
+**Scope:** re-base the battle sim's threat-assessment, win-attempt, and "gang-up" mechanics on how real
 Commander pods behave — casual/mid *and* cEDH — rather than generic multiplayer-AI theory. Grounded in
 a two-track community-strategy review (sources at end).
 
@@ -121,13 +123,46 @@ resistant):
 ---
 
 ## 4. Implementation phases
-- **F1 — perception split + reputation bias.** Add `perceived_threat = true_equity × visibility +
-  reputation`; target off perceived. *Reproduces archenemy < 1/N* (fixes the A1 "fast deck leads").
-- **F2 — equity-gated, free-rider-discounted answering.** Replace flat `POLITICS_*` rates with
-  willingness = f(own equity, free-rider discount, lethal-only). *The core attrition/coordination model.*
-- **F3 — go-first penalty + standoff; spoiler for out-of-contention seats.**
-- **F4 — protection count** (attacker) canceling answers ~1:1; archetype visibility table.
-- **F5 — power presets** (casual/cEDH horizons + coordination level) and the POM stylized-fact tests.
+- **F1 — perception split + reputation bias.** ✅ *Shipped.* Targeting keys off
+  `perceived_threat = live_threat × archetype-visibility + reputation` (the existing `live_threat` is
+  the true-equity proxy). `BattleProfile.visibility` discounts combo (0.70) / grind (0.82); a
+  lightning-rod `reputation` term accrues while a deck holds the consensus-archenemy role and decays
+  (×0.80). Verified §3.1 (visible archenemy 0.19 < 1/N), §3.3 mechanism (under-perceived deck
+  over-performs), §3.6 (coordination knob). The full per-archetype visibility table is deferred to F4.
+- **F2 — equity-gated, free-rider-discounted answering.** ✅ *Shipped.* Replaced the flat `POLITICS_*`
+  rates with a sequential, most-invested-first answer check; per-defender willingness = capability
+  (`answer_prob`) × own-equity gate (peer-relative — protect a lead, shrug if behind) × lethal gate
+  (combo/archenemy answered harder than a beatdown) × a flat `ANSWER_COORDINATION` factor (the §3.6
+  knob). Note: the elegant "discount by P(someone else answers)" was tried and **rejected** — it is
+  unstable (when every opponent is capable they all rationally defer and coordination collapses); a
+  flat coordination factor is the robust stand-in. Verified §3.6 (coordination knob monotone) and the
+  combo archenemy holds ~0.16–0.20 < 1/N. Attrition (§3.4) emerges from reserve depletion across
+  repeated attempts. Protection canceling answers ~1:1 is deferred to F4.
+- **F3 — go-first penalty + standoff; spoiler for out-of-contention seats.** ✅ *Shipped.* Attempting
+  while opponents hold open answers is suppressed (`GO_FIRST_CAUTION` scaled by the table's open
+  reserves) → decks wait out a standoff that attrition breaks (verified: more caution ⇒ longer games).
+  A clearly-trailing, late-game seat (`SPOILER_SHARE_MAX`, `SPOILER_MIN_TURN`) answers the table's
+  **leader** at boosted willingness (`SPOILER_ANSWER_BONUS`), overriding its own-equity gate → verified
+  the leader's win rate drops when spoiler etiquette is active. NOTE: the `pod_blunts_a_fast_deck`
+  anchor was converted to **ordinal** here (per enhancement-plan E2, which names this exact 0.18–0.42
+  band) — the cumulative F1–F3 archenemy now finishes ~0.15 < 1/N, the design target.
+- **F4 — protection count + full visibility table.** ✅ *Shipped.* `BattleProfile.protection` is
+  scanned from oracle text (free counters / hexproof / ward / "can't be countered" / indestructible
+  grantors) in the battle module (no analysis-pipeline category change). Each landed answer is spent
+  (attrition) but fizzles with `cancel_p = PROT_CANCEL_PER_PIECE × protection` (capped) — PROBABILISTIC
+  per attempt, since a flat 1:1 count made one piece protect forever. Verified monotone: combo pod win
+  0.15 (0 prot) → 0.26 (1) → 0.62 (4) → 0.88 (8, cEDH-dense). Visibility table completed: combo 0.70 <
+  grind 0.82 < control 0.92 < midrange 1.0 < aggro 1.10 (a wide board over-reads).
+- **F5 — power presets + POM suite.** ✅ *Shipped.* `POWER_PRESETS` (casual | mid | cedh) bundle the
+  social/format knobs — table coordination (§3.6 axis), perception sharpness, and go-first discipline
+  (casual plays recklessly, cEDH waits) — applied via `simulate_match(preset=…)` and the CLI
+  `--preset`. Pacing is reported, not forced: it emerges from the decks' own clocks (verified a fast
+  cEDH pod resolves ~5–6 turns, a casual pod ~14, ordinal cEDH < casual). A standoff-impatience term
+  (`GO_FIRST_IMPATIENCE`) was added so caution decays past a deck's clock — without it the go-first
+  penalty deadlocked games (low attempts → high reserves → high caution → ∞). The §3 stylized-facts
+  are now codified as ordinal POM tests (§3.1 archenemy<1/N, §3.2 second-threat inherits, §3.3 quiet
+  shark, §3.4 = `interaction_helps_against_combo`, §3.5 standoff, §3.6 coordination/preset, §3.7
+  pacing).
 
 Each phase is validated against the §3 stylized-facts (not magnitude anchors), and its parameters enter
 the §D global-sensitivity priors so the joint uncertainty band stays honest.

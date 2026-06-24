@@ -1,13 +1,19 @@
-# Simulator Enhancement Plan — toward a better reflection of play
+# Simulator Realism — Research Reference (literature backing)
 
-**Status:** proposed. **Scope:** improve the goldfish + battle simulators' *realism* and *honesty*
+> **⚠ This is a RESEARCH REFERENCE, not a plan.** Status, the workstream A–H tracker, the prioritized
+> roadmap, and "what's next" live **only** in **[project-plan.md](../project-plan.md) → Phase 9 →
+> *Simulator realism & calibration — research workstreams (A–H)*** (the single source of truth per
+> CLAUDE.md). This doc keeps the *why* — the literature thesis, the per-workstream rationale + citations,
+> and the non-goals. It records the original research proposal; where shipped work diverged, the
+> project-plan tracker is authoritative (e.g. workstream §F below was superseded by
+> [commander-politics-model.md](commander-politics-model.md)).
+
+**Scope of the research:** how to improve the goldfish + battle simulators' *realism* and *honesty*
 **without** real game-outcome data (which remains the ultimate update), grounded in simulation-science
-and game-AI best practice. Companion to [battle-simulator-design.md](battle-simulator-design.md).
-
-This plan is the product of a literature review across four areas — MTG/CCG game-AI engines,
-card-game *balance* simulation, simulation V&V/calibration without ground truth, and multiplayer
-free-for-all "politics" modeling. The references are collected at the end; key findings are cited
-inline as `[n]`.
+and game-AI best practice. Companion to [battle-simulator-design.md](battle-simulator-design.md). The
+product of a literature review across four areas — MTG/CCG game-AI engines, card-game *balance*
+simulation, simulation V&V/calibration without ground truth, and multiplayer free-for-all "politics"
+modeling. References are collected at the end; key findings are cited inline as `[n]`.
 
 ---
 
@@ -43,23 +49,13 @@ literature prescribes when no operational data exists [3].)
 
 ---
 
-## 1. Where we are vs. where this takes us
+## 1. Research rationale per workstream (the *why* behind project-plan's A–H tracker)
 
-| Dimension | Today | After this plan |
-|---|---|---|
-| Deck → parameters | point estimates (one `clock_mean`, one `interaction` count) | per-game **distributions**, resampled each trial, derived from deck math |
-| Interaction | a finite reserve counter | **hypergeometric availability**: P(holding an answer when a threat lands on turn T) |
-| Matchups | ~transitive on clock | strength **+ interaction vector** → genuine rock-paper-scissors |
-| Threat/politics | 6 hand-weighted terms, tuned to anchors | win-proximity-graded coalition + self-updating threat, fewer orthogonal terms |
-| Uncertainty | band perturbs **1** of ~12 knobs | **global SA** (LHS/Morris/Sobol) → joint band; params are priors not points |
-| Validation | a few magnitude "anchor" tests | **POM** suite of independent stylized facts + docking + held-out anchors |
-| Meta | none | matchup matrix → Nash-averaging + replicator projection (free calibration) |
-
----
-
-## 2. Workstreams
-
-Each is independently shippable. Code targets are named so this is actionable.
+The literature mapped onto seven independent improvement areas (A–H). The descriptions below are the
+**original research rationale + citations** for each — *why* the change matters and how the literature
+motivates it. **Status, the prioritized roadmap, and what's next are NOT here** — they live in
+[project-plan.md](../project-plan.md) → Phase 9 → *Simulator realism & calibration — research
+workstreams (A–H)*. Where shipped work diverged from the proposal below, the project-plan tracker wins.
 
 ### A. Stochastic grounding — *biggest realism gain, pure deck math* [1][2][6]
 The battle sim consumes **point** estimates; the research says resample **every trial**.
@@ -130,6 +126,15 @@ A clock-only model gives a strict pecking order; real metas cycle.
   it. *(tests/ + simulation/validation.py)*
 
 ### F. Politics realism — *grounded in multiplayer-AI theory* [4]
+> **⚠ SUPERSEDED (2026-06-22).** This early sketch was replaced by the community-strategy-grounded
+> **[commander-politics-model.md](commander-politics-model.md)**, whose F1–F5 are now **shipped**.
+> Mapping: the F1 "win-proximity paranoia" + F2 "Threat-ADS decay" ideas were realized as the
+> perception/reputation split + equity-gated answering; F4 "kingmaker/spoiler" as the shipped
+> spoiler-on-leader. Three ideas below were **not** adopted and survive only as optional future
+> tweaks: **F3 consolidate `live_threat`** (perception was layered on top instead of collapsing the
+> terms), **F5 piKL human-baseline anchoring** (perception noise partially covers it), and **F6
+> reachability gate**. Do **not** build this section's F1–F6 as written — follow the politics-model doc.
+
 Our voting + perception-noise model is already *validated* by the literature (emergent alliances =
 agreement of threat-votes [4, CICERO]; perception noise → realistic mis-targeting [4]). Upgrades:
 - **F1. Win-proximity-graded paranoia.** Interpolate between *self-interested* (max^n) for trailing
@@ -163,30 +168,17 @@ existing "real-game fitting" item, now with a method.
 
 ---
 
-## 3. Prioritized roadmap (no data required for 1–5)
+## 2. Roadmap & status → moved
 
-Ordered by *(realism + honesty gained) ÷ effort*, given zero outcome data:
-
-1. **D — Honest uncertainty (priors + global SA band).** Fixes the single most misleading output; the
-   literature is unanimous this is the #1 fix [3]. Cheapest big honesty win.
-2. **A — Stochastic grounding (per-game resampling + hypergeometric interaction).** The biggest
-   *realism* gain, pure deck math [1][2]. "Realism lives in stochastic structure."
-3. **E — POM validation harness.** Turns today's anchor-tuning into a principled, overfitting-resistant
-   filter; cheap and protects everything downstream [3].
-4. **F — Politics consolidation (win-proximity paranoia + Threat-ADS).** Fixes the maintainability and
-   lone-fast-deck problems with a theory-grounded model [4].
-5. **C — Metagame layer (Nash + replicator).** A *calibration signal available today* — validate the
-   projected meta against format intuition [2].
-6. **B — Intransitive matchups.** Structural realism (RPS); needed for the meta layer to be meaningful.
-7. **G, H — Robustness probes & data calibration.** When the pool/data exist.
-
-A natural first PR is **D1+D2+D3** (priors + LHS/Morris + joint band) and **A4** (retire the
-creature-count classifier) — together they make the model both more honest and better-grounded without
-touching the delicate politics tuning.
+The prioritized roadmap and per-workstream status now live in **[project-plan.md](../project-plan.md)
+→ Phase 9 → *Simulator realism & calibration — research workstreams (A–H)***. The research-justified
+priority ordering it records is **D → A → E → F → C → B → G/H** — ordered by *(realism + honesty gained)
+÷ effort* given zero outcome data, with the literature unanimous that honest uncertainty (D) is the #1
+fix [3] and stochastic grounding (A) the biggest realism gain [1][2].
 
 ---
 
-## 4. Non-goals (unchanged)
+## 3. Non-goals (unchanged)
 Still **not** a rules engine (golden rule #5): no stack/targeting/card resolution. Everything here keeps
 the abstraction card-agnostic; it makes the *abstraction's statistics* faithful, which is exactly what
 the game-AI literature says is the right place to spend effort [1].

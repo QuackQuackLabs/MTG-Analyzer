@@ -51,7 +51,8 @@ user can start recording games immediately; the fit engine follows once a corpus
 - **Loss:** negative log-likelihood of observed winners under simulated win-probabilities (proper
   scoring rule); + an auxiliary died-first NLL term when that field is present.
 - **Fittable subset (~3–4 knobs, kept tiny to resist overfitting):** `INTERACTION_ANSWER_BASE`,
-  `POLITICS_ARCHENEMY_ANSWER`, `THREAT_PROXIMITY_W`, optionally the archetype clock offsets.
+  `ANSWER_COORDINATION` (the F2 free-rider/coordination factor — superseded the old flat
+  `POLITICS_ARCHENEMY_ANSWER`), `THREAT_PROXIMITY_W`, optionally the archetype clock offsets.
   Everything else stays fixed.
 - **Optimizer:** derivative-free (scipy Nelder-Mead — already a dep). Each eval re-runs the sim over
   the logged pods. Regularization: penalty on deviation from current defaults (strength tuned to

@@ -1,13 +1,34 @@
 # MTG Analyzer — Project Plan
 
 > **Living document.** Every agent reads this before starting and updates status/checkboxes when
-> finishing a unit of work. Last updated: **2026-06-20**.
+> finishing a unit of work. Last updated: **2026-06-23**.
 >
 > **Status: Phases 0–8 complete; Phase 9 (battle simulator) in progress (A+B shipped, C calibration
-> open).** Feature-complete for local, chat-driven use (analyze, recommend, simulate,
-> build-from-collection, combo/interaction Q&A, **collection management + strategy guides**, and a
-> heuristic **battle/matchup simulator** with **combo-aware clocks** (turn-to-combo → battle clock);
-> 115 tests, ruff+mypy clean). Active work: Phase 9 real-game calibration (§4). Deferred: the web app
+> open; politics workstream F1–F5 shipped).** Feature-complete for local, chat-driven use (analyze,
+> recommend, simulate, build-from-collection, combo/interaction Q&A, **collection management + strategy
+> guides**, and a heuristic **battle/matchup simulator** with **combo-aware clocks** and a
+> **research-grounded commander-politics model** (perception/reputation, equity-gated answering,
+> standoff/spoiler, protection, power presets); 131 tests, ruff+mypy clean). **Active work: Phase 9 was
+> REPLANNED 2026-06-23** after validation showed the battle sim ranks decks ~inverted (speed-monocausal)
+> — the new staged roadmap is **[docs/simulator-v2-roadmap.md](docs/simulator-v2-roadmap.md)**.
+> **Stage 0 (correctness) SHIPPED 2026-06-23**: decoupled the win-clock from the deploy clock
+> (`combo_clock`) so incidental-combo aggro decks no longer score instant turn-3 combo kills — LOTR
+> rank-distance 16 → 10. **Stage 1 (richer equity) SHIPPED 2026-06-23**: a mid-game attrition/grind win
+> path (interaction + resilience, heat-discounted for the archenemy, margin-gated to protect anchors)
+> gives slow interaction-dense decks the win path the clock denied them — LOTR rank-distance **10 → 4**
+> (Sauron last→2nd, Frodo 1st→last). **Stage 2 (search) PROTOTYPED 2026-06-23, full build NOT committed:**
+> built the abstract resumable forward model (`battle_search.py`) — its 2.1 gate reproduces production
+> exactly — and a determinized-search prototype; measured that search does NOT improve the ranking (dist
+> stays 4, adds skillful-timing texture only), confirming the decision gate. **Stage 3 (politics)
+> AUDITED + PROTOTYPED 2026-06-23:** ablation shows politics is appropriately *secondary* (fundamentals
+> → dist 6, politics refines to 4) with impact concentrated in the validated perception/lightning-rod
+> mechanism; prototyped a stable CICERO-grounded coordination model (opt-in) that reproduces the ranking.
+> **Stage 3c (metagame-knowledge feedback loop) SHIPPED 2026-06-23 — the breakthrough:** the table now
+> targets decks KNOWN to win (each deck's realized win rate fed back as a threat prior via a damped
+> fictitious-play loop, `simulate_metagame` / `mtg battle --metagame`), fixing the bug where a never-wins
+> aggro deck was the turn-1 archenemy and a quiet winner was never targeted. **Converges to LOTR
+> rank-distance 0 — a perfect match to the experienced-player ranking** (Sauron last→1st, Frodo's
+> archenemy 84%→68%, spread 33pp→27pp). Opt-in (one-off `mtg battle` unchanged). Deferred: the web app
 > (publishing, §7). Primary interface is chat via Claude Code.
 
 ## 1. Vision
@@ -258,7 +279,17 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       downloader are thin glue, exercised via real runs). Perf on the full 38k-card DB: card lookup
       ~2 ms, parse+resolve a 100-card deck ~35 ms, analyze ~1 ms.
 
-### Phase 9 — Heuristic battle/matchup simulator  `[~]` ← **A+B shipped, C in progress**
+### Phase 9 — Heuristic battle/matchup simulator  `[~]` ← **REPLANNED 2026-06-23: see [docs/simulator-v2-roadmap.md](docs/simulator-v2-roadmap.md) (Stages 0–3 done → LOTR dist 16→4. S0+1 shipped to production; S2 search + S3 grounded coordination prototyped in `battle_search.py` — both measured as no-ranking-gain → kept opt-in, production unchanged; S3 audit confirms politics is appropriately secondary. The "A+B+F shipped, only 9C remains" framing below is historical)**
+
+> **⚠ Active plan = [docs/simulator-v2-roadmap.md](docs/simulator-v2-roadmap.md).** Validation found the
+> shipped model ranks decks ~inverted (speed-monocausal; clock = commander-deploy turn, not win turn).
+> The research-grounded replan stages the fix: **0 ✅ SHIPPED** — decoupled deploy-clock from win-clock
+> via `BattleProfile.combo_clock` (incidental combos gate the combo-win on actual assembly turn; aggro
+> decks with a late combo win by beatdown, not instant combo), recorded the LOTR ordinal anchor +
+> `test_anchor_lotr_ordinal_ranking` (rank-distance 16 → 10) → **1** multi-factor equity
+> (resilience/interaction-availability/intransitive matchups) → **2** abstract forward model +
+> determinization/IS-MCTS search → **3** CICERO-style opponent-model politics, weighted secondary. The
+> A–H tracker and Phase A/B/C notes below are retained for history and mapped to stages in the roadmap.
 Pod-aware **1v1 + 4-player** match simulator that abstracts each deck to a `BattleProfile` (clock,
 interaction, card advantage, resilience, combo, threat) derived from existing `analyze()`/`simulate()`
 signals, then runs a heuristic turn loop with interaction trades and (4-player) politics/threat
@@ -282,6 +313,8 @@ and phasing: **[docs/battle-simulator-design.md](docs/battle-simulator-design.md
       against the pre-identified archenemy (up to `ARCHENEMY_ANSWERERS` pitch in) while trailing
       attackers face one answerer; flat tutor bonus gated by readiness (no turn-1 combo). Result is
       now intuitive — a fast deck wins ~60% heads-up but ~19% as the 4-pod archenemy.
+      *(Superseded by workstream F: the flat `POLITICS_ARCHENEMY/NONARCH_ANSWER` multipliers described
+      here were replaced by F2's equity-gated, free-rider-discounted answer check — see below.)*
 - [x] Phase C — **explainability** (`clock_rank` vs. `equity_rank` gap + per-deck attribution):
       `DeckWinStats` now carries `clock_mean`/`clock_rank`/`equity_rank`/`rank_shift` and a one-line
       `explain` (clock→equity, politics pressure, dominant win method); the rank gap surfaces how much
@@ -297,7 +330,9 @@ and phasing: **[docs/battle-simulator-design.md](docs/battle-simulator-design.md
       won ~0.38 vs first ~0.15); fixed by resolving target-selection and archenemy-consensus ties
       uniformly via the seeded RNG (`_argmax(…, rng)` + an rng key on the alpha-strike target). Mirror
       now ~0.25/seat; real non-identical pods unchanged (Sauron 39 / Tom 37 / Henzie 20 / Galadriel 4).
-      103 tests, ruff+mypy clean.
+      103 tests, ruff+mypy clean. *(Update: workstream F3 converted the `pod_blunts_a_fast_deck` anchor
+      to ordinal — the F-model archenemy now finishes ~0.15 < 1/N, the design target, per the
+      enhancement plan's E2 guidance; the other three anchors still hold as magnitudes.)*
 - [~] Phase C — **real-game fitting** (the last 9C item; planned + decisions locked, see
       **[docs/battle-calibration-fitting.md](docs/battle-calibration-fitting.md)**). Locked: **Standard**
       logging (pod + winner + died-first + end-turn) and an **anchor-protected nudge** fit (regularize
@@ -314,11 +349,87 @@ and phasing: **[docs/battle-simulator-design.md](docs/battle-simulator-design.md
             `matchlog list` shows raw observed win rates + corpus progress. 8 tests (validation +
             JSONL round-trip + malformed-line surfacing + form parsing/flow); 111 total, ruff+mypy clean.
       - [ ] **9C-2 fit engine** (`mtg battle fit`): NLL of observed winners under simulated
-            win-probabilities, ~3–4 fittable knobs (`INTERACTION_ANSWER_BASE`,
-            `POLITICS_ARCHENEMY_ANSWER`, `THREAT_PROXIMITY_W`), scipy Nelder-Mead, regularized.
-            *Blocked on a corpus — ~30–45 games for a directional fit, ~60–80 for confidence.*
-      - [ ] **9C-3 apply + guardrail** (anchor fixtures as a hard gate; write fitted params to a
-            reversible `data/`-local override, never the source defaults).
+            win-probabilities, ~3–4 fittable knobs (`INTERACTION_ANSWER_BASE`, `ANSWER_COORDINATION`
+            — the F2 successor to the removed `POLITICS_ARCHENEMY_ANSWER` — `THREAT_PROXIMITY_W`),
+            scipy Nelder-Mead, regularized. *Blocked on a corpus — ~30–45 games for a directional fit,
+            ~60–80 for confidence.*
+      - [ ] **9C-3 apply + guardrail** (the anchor fixtures as a hard gate — including the now-ordinal
+            `pod_blunts_a_fast_deck` relations; write fitted params to a reversible `data/`-local
+            override, never the source defaults).
+
+#### Simulator realism & calibration — research workstreams (A–H)
+*From the 2026-06-20 four-track literature review. **This is the authoritative status tracker.** The
+research rationale (the stochastic-structure thesis, V&V/POM reasoning) and academic references live in
+**[docs/simulator-realism-research.md](docs/simulator-realism-research.md)** — a reference doc only, no
+status.* **Naming note:** these letters are the *research workstreams* and are **distinct** from the
+"Phase A/B/C" build phases above (e.g. workstream C = metagame layer, not the Phase C calibration work).
+> **⚠ SUPERSEDED (2026-06-23) by [docs/simulator-v2-roadmap.md](docs/simulator-v2-roadmap.md).** A deep
+> external-literature review ([docs/simulator-research-2026-06.md](docs/simulator-research-2026-06.md))
+> + a 15-pod LOTR validation ([docs/lotr-sim-validation-findings.md](docs/lotr-sim-validation-findings.md))
+> re-prioritized this work into a staged roadmap (Stage 0 correctness → Stage 1 richer heuristic equity
+> → Stage 2 determinization+IS-MCTS search → Stage 3 opponent-model politics; POM-ordinal validation
+> primary). The A–H letters below are preserved and **mapped to the new stages in the roadmap §6**; the
+> old priority order (`D → A → E → F → C → B → G/H`) is retired. **Two corrections the validation forced:**
+> (a) **A4 was NOT actually shipped** — the `creatures ≥ 27 → aggro` classifier is still live and the
+> clock still uses commander-*deploy* turn, which produces a ~inverted deck ranking (rank-distance
+> 16/18); finishing it is **Stage 0.1**. (b) Real-game corpus fitting (H/9C-2) is **downgraded to
+> opportunistic** — the literature does not support it; ordinal POM anchors are the workhorse.
+
+| WS | Title | Status |
+|----|-------|--------|
+| **A** | Stochastic grounding (per-game resampling; hypergeometric interaction) | ◐ **partial** — A1 (realized per-game clock) shipped; **A4 NOT shipped** (creature-count classifier still mislabels Frodo/Sméagol → Stage 0.1); **A2** (hypergeometric answer-availability → Stage 1.2) and **A3** (decision-noise; → Stage 2.2 determinization) open |
+| **B** | Intransitive matchups — RPS via a strength + interaction term | ☐ not started |
+| **C** | Metagame layer — `mtg meta` → matchup matrix → Nash-averaging + replicator dynamics | ☐ not started (no `simulation/meta.py`) |
+| **D** | Honest uncertainty — priors + global SA + joint band | ✅ **shipped** — D1 `PRIORS`, D2 `sensitivity.py` (LHS + correlation screening; Morris/Sobol' the documented next step), D3 `mtg battle --sensitivity` joint band |
+| **E** | POM validation harness | ◐ **partial** — E1/E2 substantially shipped (independent ordinal stylized-fact tests + ordinal anchors); **E3** docking (an independent closed-form estimator) and a formal **held-out** anchor subset still open |
+| **F** | Commander-politics realism | ✅ **shipped F1–F5** (detail below) |
+| **G** | Robustness probes — exploiter decks; spinning-top coverage | ☐ later (needs a broader deck pool) |
+| **H** | Real-data calibration — Bradley-Terry/Elo + Bayesian prior update | ◐ **= Phase 9C real-game fitting** above — 9C-1 logging shipped; 9C-2 fit + 9C-3 apply blocked on a logged corpus |
+
+- [x] **Workstream F — commander-politics realism** (re-base threat/answer/gang-up on how real EDH
+      pods play; spec **[docs/commander-politics-model.md](docs/commander-politics-model.md)**, validated
+      against §3 ordinal stylized-facts, not magnitude anchors). Supersedes the older §F sketch in the
+      enhancement plan. **Complete F1–F5.**
+      - [x] **F1 — perception split + reputation/lightning-rod bias.** Targeting keys off
+            `perceived_threat = live_threat × archetype-visibility + reputation` (not true equity).
+            `BattleProfile.visibility` (combo 0.70 / grind 0.82 / else 1.0); a lightning-rod
+            `reputation` accumulator bumps the consensus archenemy each turn and decays (×0.80),
+            keeping the table on it semi-independent of board state. Reproduces **archenemy < 1/N**
+            (visible fast combo 0.19 in a fair pod), the **quiet-shark** mechanism (identical decks:
+            visibility-0.7 deck wins 0.62 vs ~0.13), and a **coordination knob** (archenemy win falls
+            as answer-base rises). New knobs added to `PRIORS` for global SA. 2 ordinal POM tests;
+            120 total, ruff+mypy clean.
+      - [x] **F2 — equity-gated, free-rider-discounted answering.** Replaced the flat
+            `POLITICS_ARCHENEMY/NONARCH` multipliers with a sequential, most-invested-first answer
+            check: willingness = `answer_prob` × peer-relative own-equity gate × lethal gate
+            (combo/archenemy > beatdown) × a flat `ANSWER_COORDINATION` factor (the §3.6 / casual↔cEDH
+            knob). The naive "P(someone else answers)" free-rider product was tried and rejected
+            (unstable — universal deferral collapses coordination); the flat factor is the robust
+            stand-in. Coordination knob verified monotone; archenemy holds ~0.16–0.20 < 1/N; attrition
+            emerges from reserve depletion. Both pre-F deck anchors kept passing by setting the new
+            beatdown lethal-gate to 0.65 (no anchor rewrite). New knobs in `PRIORS`. 1 POM test; 121
+            total, ruff+mypy clean.
+      - [x] **F3 — go-first penalty + standoffs; spoiler-on-leader.** Attempts are suppressed while
+            opponents hold open answers (`GO_FIRST_CAUTION` × table open-reserve) so decks wait out a
+            standoff that F2 attrition breaks; an out-of-contention seat (trailing share, late game)
+            answers the leader at boosted willingness (`SPOILER_ANSWER_BONUS`), overriding its equity
+            gate. Verified: more caution ⇒ longer games; spoiler ⇒ leader win drops. The
+            `pod_blunts_a_fast_deck` anchor was converted to ordinal here (research-led, per E2). 2 POM
+            tests; 123 total, ruff+mypy clean.
+      - [x] **F4 — protection cancels answers ~1:1; full archetype-visibility table.**
+            `BattleProfile.protection` scanned from oracle text in the battle module (free counters /
+            hexproof / ward / can't-be-countered / indestructible grantors — no analysis-pipeline
+            change). Each landed answer is spent (attrition) but fizzles with probability
+            `PROT_CANCEL_PER_PIECE × protection` (capped) — probabilistic per attempt, since a flat 1:1
+            count made one piece protect forever (0.68!). Verified monotone (0.15→0.26→0.62→0.88 as
+            protection rises). Visibility table completed: combo<grind<control<midrange<aggro. 3 POM
+            tests; 26 battle tests, ruff+mypy clean.
+      - [x] **F5 — power presets + POM stylized-fact suite.** `POWER_PRESETS` (casual | mid | cedh)
+            bundle table coordination (§3.6), perception sharpness, and go-first discipline; applied
+            via `simulate_match(preset=…)` + CLI `--preset`. Added `GO_FIRST_IMPATIENCE` so caution
+            decays past a deck's clock (fixes a go-first deadlock that pegged slow pods at the turn
+            cap). Pacing emerges from decks (cEDH pod ~5–6, casual ~14; ordinal cEDH < casual). All 7
+            §3 stylized-facts codified as ordinal POM tests. 4 POM tests; 130 total, ruff+mypy clean.
 
 ## 5. Recommendation engine design (reference)
 
@@ -544,7 +655,8 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 - **2026-06-20** — **Simulator enhancement plan (research-grounded).** Reviewed the full simulation,
   then ran a 4-track literature review (MTG/CCG game-AI, card-game balance simulation, simulation V&V/
   calibration without data, multiplayer "politics" modeling) and wrote
-  `docs/simulator-enhancement-plan.md`. Thesis from the research: realism lives in *stochastic
+  `docs/simulator-enhancement-plan.md` (later renamed `docs/simulator-realism-research.md`). Thesis from
+  the research: realism lives in *stochastic
   structure* not rule detail; derive parameters from deck math (hypergeometric) as *distributions*;
   a single power scalar cannot make rock-paper-scissors (need an interaction term); evaluate the
   *metagame* (Nash-averaging + replicator) as a free no-data calibration signal; and honest
@@ -574,3 +686,177 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   spoiler-on-leader, power-preset pacing (casual ~10-13 / cEDH ~5). Plan: F1 perception+reputation →
   F2 equity/free-rider answering → F3 standoff/spoiler → F4 protection → F5 presets+POM tests.
   A1 code change is staged uncommitted pending F1 (A1 alone makes the fast deck lead, which is wrong).
+  *(Resolved 2026-06-22: F1–F5 shipped; A1's realized-clock logic is integrated in `battle.py` and the
+  fast deck now correctly finishes below 1/N as the archenemy.)*
+- **2026-06-22** — **Workstream F1 shipped (perception split + reputation/lightning-rod).** The table
+  now targets off `perceived_threat = live_threat × archetype-visibility + reputation` instead of raw
+  live-threat. `BattleProfile.visibility` (combo 0.70 / grind 0.82 / else 1.0; full table deferred to
+  F4) under-reads durdle decks; a `reputation` accumulator bumps the consensus archenemy each turn and
+  decays (×0.80), so the table stays fixated semi-independent of board state — collapsing the
+  highest-perceived deck below fair share. Verified the F1 stylized-facts: archenemy < 1/N (visible
+  fast combo **0.19** in a fair pod), the quiet-shark mechanism (identical decks, visibility-0.7 deck
+  wins **0.62** vs ~0.13), and the coordination knob (archenemy win falls monotonically as answer-base
+  rises). New continuous knobs (`REPUTATION_W/DECAY/STATIC_W`) added to `PRIORS` for global SA. 2
+  ordinal POM tests added; the deliberately-pinned `pod_blunts_a_fast_deck` anchor still holds (no
+  rewrite needed). 120 tests, ruff+mypy clean.
+- **2026-06-22** — **Workstream F2 shipped (equity-gated, free-rider-discounted answering).** The flat
+  `POLITICS_ARCHENEMY/NONARCH` answer multipliers are gone; a win attempt now fires a sequential,
+  most-invested-first answer check where each opponent's willingness = capability × peer-relative
+  own-equity gate × lethal gate (a combo/archenemy is answered harder than a beatdown swing) × a flat
+  `ANSWER_COORDINATION` factor. Two dead-ends recorded: (1) a *parallel* over-commit drained reserves
+  ~2× too fast; (2) the elegant "discount by P(someone else answers)" free-rider product is unstable —
+  when all opponents are capable they rationally all defer and coordination collapses against the very
+  threat the table reads clearest. The flat coordination factor is the robust stand-in and doubles as
+  the §3.6 knob / F5 casual↔cEDH axis (verified monotone: combo win 0.31→0.10 as coordination
+  0.65→0.90). A subtle bug — the equity-gate baseline initially included the attacker, whose lethal
+  spike floored every defender's gate — was fixed by averaging over peers only. Both pre-F deck anchors
+  (`pod_blunts_a_fast_deck`, `grind_out_values_aggro`) kept passing by setting the new beatdown
+  lethal-gate to 0.65, so no anchor rewrite was needed while the archenemy still finishes < 1/N. 1 POM
+  test; 121 total, ruff+mypy clean.
+- **2026-06-22** — **Workstream F3 shipped (go-first penalty + standoffs + spoiler-on-leader).** Two
+  mechanics from how real pods stall and police a frontrunner. Go-first: `p_attempt` is suppressed in
+  proportion to the table's *open* answers (`GO_FIRST_CAUTION` × Σ opponent reserve / `STANDOFF_OPEN_REF`)
+  — savvy decks wait rather than go first into a loaded table, and F2 attrition is what finally drains
+  reserves and forces someone to commit (verified: more caution ⇒ longer games, 8.7→10.0 turns).
+  Spoiler: a clearly-trailing, late-game seat (`SPOILER_SHARE_MAX`, `SPOILER_MIN_TURN`) answers the
+  table **leader** at boosted willingness (`SPOILER_ANSWER_BONUS`), overriding the equity gate that
+  would say "not my problem" (verified: leader win 0.255→0.214 with spoiler on). The cumulative F1–F3
+  model now puts the visible archenemy at **~0.15 < 1/N**, exactly the design target — so the
+  `pod_blunts_a_fast_deck` magnitude anchor was converted to **ordinal** (a research-led call: the
+  enhancement plan's E2 explicitly names this "0.18–0.42" band as the kind to convert, and equifinality
+  makes a pinned magnitude dishonest). The relations + a loose regression floor are retained. 2 POM
+  tests; 123 total, ruff+mypy clean.
+- **2026-06-22** — **Workstream F4 shipped (protection + full visibility table).** Added
+  `BattleProfile.protection`, scanned from oracle text by a battle-module-local regex (free counters,
+  hexproof/ward/shroud, "can't be countered", indestructible/protection grantors) — kept out of the
+  analysis categorizer's `_REPORTED` set so `DeckReport` and its tests are untouched. In the answer
+  check, each landed answer is still spent (attrition) but fizzles with `PROT_CANCEL_PER_PIECE ×
+  protection` (capped at 0.75). First pass used a flat 1:1 cancel COUNT and blew up (one piece →
+  combo 0.68, because the combo re-attempts every turn so one piece protected forever); the
+  probabilistic per-attempt model is the fix and is monotone/graded: combo pod 0.15→0.26→0.62→0.88 as
+  protection 0→1→4→8 (a cEDH-dense combo over-performs even as archenemy — "a win must survive three
+  defenders, free counters cancel them 1:1"). Completed the archetype-visibility table
+  (combo 0.70 < grind 0.82 < control 0.92 < midrange 1.0 < aggro 1.10). 3 POM tests; 26 battle / 126
+  total, ruff+mypy clean.
+- **2026-06-22** — **Workstream F5 shipped (power presets + POM suite) — workstream F complete.**
+  `POWER_PRESETS` (casual | mid | cedh) bundle the social/format knobs: table coordination (the §3.6
+  axis — casual coordinates poorly, cEDH gangs the archenemy), perception sharpness, and go-first
+  discipline (casual plays recklessly, cEDH waits). Applied as temporary `battle_params` overrides by
+  `simulate_match(preset=…)` and surfaced via CLI `mtg battle --preset`. Pacing is reported, not forced
+  — it emerges from the decks' own goldfish clocks (verified: a fast cEDH pod resolves ~5–6 turns, a
+  casual pod ~14; the POM test pins the ordinal cEDH<casual since magnitudes are deck-driven/equifinal).
+  Fixed a go-first DEADLOCK (low attempts → high reserves → high caution → games pegged at the 24-turn
+  cap) by adding `GO_FIRST_IMPATIENCE`: caution decays the longer a deck sits past its clock, so someone
+  is eventually forced to commit (the doc's own standoff-resolution mechanism). All seven §3 stylized-
+  facts are now codified as **ordinal POM tests** (archenemy<1/N; second-threat inherits; quiet shark;
+  attrition = the existing interaction-helps invariant; standoff lengthening; coordination/preset
+  ordering; pacing). 4 POM tests; **130 total, ruff+mypy clean. Workstream F (commander-politics realism)
+  is fully shipped F1–F5.**
+- **2026-06-22** — **Planning consolidated — one source of truth.** Folded the simulator-enhancement
+  plan's *planning* (the workstream A–H tracker + prioritized roadmap) into this file under Phase 9 →
+  *Simulator realism & calibration — research workstreams (A–H)*, with an at-a-glance status table
+  (D ✅, F ✅; A ◐ A1/A4 only, E ◐, H ◐ = 9C; B/C/G ☐) and a **naming-collision note** distinguishing
+  the research workstreams A–H from the Phase A/B/C *build* phases. `docs/simulator-enhancement-plan.md`
+  is now a **research reference only** (renamed `docs/simulator-realism-research.md`: literature thesis,
+  per-workstream rationale + citations, non-goals, references) with a banner pointing here for status;
+  its today→future table and roadmap were
+  removed (→ pointers). Updated the `commander-politics-model.md` status header (proposed → shipped,
+  status lives here). Prompted by the §F drift caught earlier — two planning docs were the root cause.
+  Docs-only; no code change (tests unchanged at 130).
+- **2026-06-23** — **Validation + replan + Stage 0 shipped.** A full 15-pod LOTR sweep showed the battle
+  sim ranks decks **~inverted** vs. experienced play (rank-distance 16/18) — root cause: the "clock"
+  measured *commander-deploy* turn, not *win* turn, and an aggro deck merely *containing* a combo scored
+  **instant turn-3 combo kills**. A deep external-literature review
+  ([docs/simulator-research-2026-06.md](docs/simulator-research-2026-06.md)) + the validation
+  ([docs/lotr-sim-validation-findings.md](docs/lotr-sim-validation-findings.md)) drove a research-grounded
+  **replan** ([docs/simulator-v2-roadmap.md](docs/simulator-v2-roadmap.md)): Stage 0 correctness → Stage 1
+  multi-factor equity → Stage 2 determinization+IS-MCTS search → Stage 3 opponent-model politics (POM-
+  ordinal validation primary; corpus-NLL fitting downgraded). **Stage 0 shipped:** `BattleProfile.combo_clock`
+  decouples the win-clock from the deploy/attempt clock — an incidental combo only wins once *assembled*
+  (`turn ≥ combo_clock − COMBO_ONLINE_SLACK`); aggro decks with a late combo now win by **beatdown** at
+  their combat clock, and the combo blend was narrowed to combo-*primary* decks. Backward-compatible
+  (synthetic/combo-primary profiles fall back to `clock_mean`). Added `test_anchor_lotr_ordinal_ranking`
+  (the first POM ordinal ground-truth gate). **LOTR rank-distance 16 → 10** (Frodo & Sam 74% → 31%;
+  resilient Tom/Galadriel rose to the top). 131 tests, ruff+mypy clean. *Open (Stage 1):* Sauron still
+  under-ranked + Sméagol low — the speed-monocausal weighting the next stage fixes. Also corrected a
+  stale **A4-shipped** marker in the A–H tracker (it was never actually shipped — it was this bug).
+- **2026-06-23** — **Stage 1 shipped (richer equity — the speed-monocausal fix).** A param sweep first
+  proved that re-weighting existing levers was inert (Sauron 10%→15%, rank-distance stuck at 10): games
+  end ~T9 and the inevitability tiebreak only fired at turn 24, so a slow interaction-dense deck had **no
+  win path**. Added a **mid-game attrition/grind win path** (`battle.py` `grind_equity` + the per-turn
+  attrition draw; `battle_params` `ATTRITION_*`/`GRIND_*`): once past `ATTRITION_MIN_TURN` a game can
+  resolve by grind, winner drawn weighted by grind-equity^GRIND_POWER (interaction-heaviest + card
+  advantage + resilience/protection + combo redundancy). Two refinements make it precise: a **heat
+  discount** (grind-equity ÷ accrued archenemy reputation, so the perennial lightning rod can't also win
+  the grind — this swaps quiet Sauron above focused Frodo) and a **margin gate** (firing ∝ how far the
+  leader out-grinds the field MEAN through a sharp logistic — ≈0 when resource-even, protecting the
+  speed/mirror anchors; hard in a lopsided pod). **LOTR rank-distance 10 → 4** (Sauron last → 2nd, Frodo
+  1st → last; the original inversion is gone). Tightened `test_anchor_lotr_ordinal_ranking` (gate 12 → 8,
+  + a Sauron > Frodo assertion); recalibrated `test_anchor_pod_blunts_a_fast_deck` (a lone control deck
+  now grinds a glass-cannon combo to ~0.52 heads-up — the intended correction; the pod still crushes it
+  to 0.06). Anchors hold: speed 0.905, grind 0.90, mirror symmetric. 131 tests, ruff+mypy clean. *Open:*
+  Sauron #2 not #1 + a Gandalf/Galadriel mid-table swap — finer strategic texture for Stage 2 (search)
+  / Stage 3 (opponent modeling). Stage 1 hitting the anchor makes **Stage 2 optional polish**, not a fix.
+- **2026-06-23** — **Stage 2 prototyped (searched decisions); full build NOT committed — evidence-based.**
+  Built the make-or-break **2.1 gate** in a new `simulation/battle_search.py` (separate from production
+  `battle.py`): an explicit, **resumable, card-agnostic forward model** (`BattleState` + `step_turn` /
+  `play_from(state, rng, decide)`) with a `decide` **policy seam** for the win-attempt commit. The
+  heuristic policy faithfully ports Stage-1's mechanics and **reproduces production exactly** (LOTR dist 4,
+  identical win rates) — proving the abstraction is expressive enough that search on it is trustworthy.
+  Then prototyped the research's **determinization + cheap-rollout** (`make_search_decide`: roll the rest
+  of the game out K times under COMMIT vs WAIT, pick the winner) on the go-first/hold-up decision.
+  **Measured: search does NOT improve the ranking** (K=8 → dist stays 4); it shifts share toward
+  optimal-timing combo decks (Tom 42→48%, Galadriel 28→40%, Sauron 34→29%) at ~4× compute — skillful-play
+  texture, not ordinal accuracy. With Stage 1 already at the anchor, this **confirms the decision gate: do
+  not commit the multi-week full UCB-tree IS-MCTS build for the ranking; Stage 3 (politics) is higher
+  value.** Prototype kept as the validated foundation (5 tests incl. the 2.1 gate; ruff+mypy clean).
+  136 tests total. Full IS-MCTS + visit-count ensembling remains the documented next increment if
+  "skillful-timing realism" is ever the explicit goal.
+- **2026-06-23** — **Stage 3 politics audited + prototyped; existing politics CONFIRMED, no production
+  rebalance.** The research validates the workstream-F politics (CICERO-style voting/perception is
+  literature-backed) and prescribes two checks, both done evidence-based. **Audit (3.2 / the 14×
+  "tactics dominate" guardrail):** ablating each politics layer over the 15 LOTR pods shows the
+  tactical/resource fundamentals alone already rank well (ALL-politics-off → dist 6) and politics merely
+  *refines* to dist 4 → politics is **appropriately secondary, no down-weighting needed**; that
+  refinement is almost entirely the **perception/lightning-rod** mechanism (remove → dist 8, Frodo
+  rebounds 8→21%), while the coordination/equity-gate/spoiler knobs are **near-inert on the ranking**
+  (flagged for a future simplification pass). **Grounded opponent-model (3.1):** prototyped a stable
+  CICERO-lite bystander model in `battle_search.py` (opt-in `GROUNDED_COORDINATION`, default off) — each
+  defender free-rides on the OTHER defenders' answering capacity (depends only on others → no collapse,
+  fixing the instability the flat-knob comment documented); measured to **reproduce the ranking exactly
+  (dist 4)** at calibrated strength, over-strong free-riding mildly degrades it (dist 6, archenemy slips)
+  — a fidelity/principle improvement, not an outcome change, so kept opt-in. **Human-regularization
+  (3.3)** already present via `PERCEPTION_NOISE` + `PRIORS`. 137 tests, ruff+mypy clean.
+- **2026-06-23** — **Stage 3b/3c (user-driven): metagame-knowledge feedback loop SHIPPED — LOTR
+  rank-distance 4 → 0.** Re-running the full 15-pod sweep, the user observed the win-rate spread was too
+  wide and the archenemy was wrong: a never-wins aggro deck (Frodo) was the turn-1 archenemy 84% of the
+  time while the quiet winner (Sauron) was never targeted (0%). **3b (negative result):** tried ganging up
+  on the static resource leader (`THREAT_DOMINANCE_W`) — it *widens* the spread and scrambles the ranking,
+  because grind-equity mis-predicts winners and a resource-dense deck survives being targeted (you can't
+  politics away a real power gap). Kept opt-in/default-off as a documented dead-end. **3c (the fix, the
+  user's idea):** feed each deck's REALIZED win rate back as a standing threat prior (`win_prior =
+  win_rate − 1/pod_size`, added to `perceived_threat` past the quiet-shark discount) via a **damped
+  fictitious-play loop** — `simulate_metagame` + CLI `mtg battle --metagame` (`WINRATE_PRIOR_W` /
+  `METAGAME_PRIOR_WEIGHT`/`DAMP`/`ITERS`; `BattleProfile.win_prior`). Damping kills the undamped overshoot
+  (target winner → it loses → oscillate). **Converges in ~5 passes to LOTR rank-distance 0 — a perfect
+  match to the experienced-player ranking**: Sauron last → 1st (prior +0.10, now drawn as a threat),
+  Frodo's archenemy share 84% → 68% (prior −0.13, left alone at game start while the dynamic terms still
+  flag it if it takes off), real winners Tom/Gandalf draw the heat, spread 33pp → 27pp. Opt-in
+  (standing `WINRATE_PRIOR_W` default 0 → one-off `mtg battle` unchanged); `simulate_metagame` restores
+  all global state. 1 new test (`test_metagame_feedback_*`). 138 tests, ruff+mypy clean. **First politics
+  mechanism that improves the model on every axis — ranking, archenemy realism, and spread.**
+- **2026-06-23** — **Stage 3d (user-driven): INFORMED-TABLE assumption — the archenemy now tracks power.**
+  The user pushed: a 37%-win deck (Sauron) being the archenemy only ~4% of the time is wrong; assume
+  players understand power levels, which should drive the strongest deck near the top of the archenemy
+  ranking. Diagnosis confirmed: Sauron wins by **attrition**, which is invisible to the threat read (its
+  `live_threat` is the LOWEST at the table, 5.8 vs Frodo's 19.2), and forcing the prior weight high enough
+  to target it (a) oscillates and (b) over-suppresses (Sauron → 14% win, archenemy 56%). Resolution: the
+  fictitious-play loop LEARNS power levels at the stable weight, then `simulate_metagame(informed=True)`
+  runs ONE reporting pass at the strong `METAGAME_INFORMED_WEIGHT` (100) so the table targets by known
+  power. Quantified the regime: casual → archenemy backwards; **informed → archenemy tracks power (Sauron
+  near top, Frodo→5%), win rates compress toward parity.** Baked the reframe into the API/CLI output —
+  **power = the ranking + archenemy column; win rate = the policed outcome** (the correctly-policed leader
+  wins less; 2nd/3rd under-the-radar decks inherit, the empirical 11%-archenemy pattern). `MetagameResult`
+  now reports `power_rank`/`power_level`/`archenemy_rate`/`win_rate`; CLI prints `# deck power archenemy%
+  win%`. The cranked weight is applied only in the reporting pass (convergence stays stable). Metagame
+  test updated to the power-ranking semantics. 138 tests, ruff+mypy clean.
