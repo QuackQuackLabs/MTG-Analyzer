@@ -1,10 +1,10 @@
 # Simulator Research — Literature Reference
 
-> **⚠ This is a RESEARCH REFERENCE, not a plan.** Status, the prioritized roadmap, and "what's next"
-> live **only** in **[simulator-v2-roadmap.md](simulator-v2-roadmap.md)** (the active staged plan) and
-> **[project-plan.md](../project-plan.md) → Phase 9** (the single source of truth per CLAUDE.md). This
-> doc keeps the *why* — the literature thesis, per-workstream rationale + citations, and the non-goals.
-> Where shipped work diverged from a proposal here, the roadmap / project-plan tracker is authoritative.
+> **⚠ This is a RESEARCH REFERENCE, not a plan.** Status, the staged roadmap, and "what's next" live
+> **only** in **[project-plan.md](../project-plan.md) → Phase 9** (the single source of truth per
+> CLAUDE.md, which absorbed the former standalone v2 roadmap). This doc keeps the *why* — the literature
+> thesis, per-workstream rationale + citations, and the non-goals. Where shipped work diverged from a
+> proposal here, the project-plan tracker is authoritative.
 
 This consolidates the two literature sweeps behind the battle simulator:
 
@@ -13,8 +13,8 @@ This consolidates the two literature sweeps behind the battle simulator:
   simulation-science and game-AI best practice. Motivates the A–H workstreams.
 - **Part II — Search & opponent-modeling literature** (synthesis of 2026-06-23): a deeper multi-source
   sweep on how a heuristic, NON-rules-engine 4-player FFA simulator should be *architected* — which
-  named the one missing piece (searched decisions) and motivated the
-  [v2 roadmap](simulator-v2-roadmap.md).
+  named the one missing piece (searched decisions) and motivated the staged replan in
+  [project-plan.md](../project-plan.md) → Phase 9.
 
 Companion design spec: [battle-simulator-design.md](battle-simulator-design.md). Politics design spec:
 [commander-politics-model.md](commander-politics-model.md).
@@ -78,9 +78,9 @@ literature prescribes when no operational data exists [3].)
 
 The literature mapped onto seven independent improvement areas (A–H). The descriptions below are the
 **original research rationale + citations** for each — *why* the change matters and how the literature
-motivates it. **Status, the prioritized roadmap, and what's next are NOT here** — they live in
-[simulator-v2-roadmap.md](simulator-v2-roadmap.md) and [project-plan.md](../project-plan.md) → Phase 9.
-Where shipped work diverged from the proposal below, those trackers win.
+motivates it. **Status, the staged roadmap, and what's next are NOT here** — they live in
+[project-plan.md](../project-plan.md) → Phase 9 (the single source of truth).
+Where shipped work diverged from the proposal below, that tracker wins.
 
 ### A. Stochastic grounding — *biggest realism gain, pure deck math* [1][2][6]
 The battle sim consumes **point** estimates; the research says resample **every trial**.
@@ -219,7 +219,7 @@ _(Full source URLs captured in the research briefs that produced this plan; see 
 > fetched, 115 claims extracted, 25 adversarially verified — 25/25 confirmed, only 1 non-unanimous).
 > It answers: *how should a heuristic, NON-rules-engine simulator for a 4-player Commander free-for-all
 > be architected to produce realistic relative win rates?* It is the **external-literature input** to
-> the [v2 roadmap](simulator-v2-roadmap.md) (the replan it motivates). Findings are cited `[n]`;
+> the staged replan in [project-plan.md](../project-plan.md) → Phase 9. Findings are cited `[n]`;
 > sources at the end of this part.
 
 ## 0. Headline

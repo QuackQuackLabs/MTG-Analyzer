@@ -2,7 +2,7 @@
 
 The Stage-0/1 engine in `battle.py` makes every in-game decision by a fixed heuristic (the go-first
 caution formula, the equity-gated answer check). The research synthesis
-([docs/simulator-research-2026-06.md](../../../docs/simulator-research-2026-06.md)) says the strongest
+([docs/simulator-research.md](../../../docs/simulator-research.md) Part II) says the strongest
 imperfect-information card-game results come from **determinization + a cheap stochastic rollout**:
 sample the hidden future, roll it out under a light policy, and pick the action that wins more — NOT a
 hand-tuned threshold. This module is the **2.1 gate**: an explicit `BattleState` + `step` over the same

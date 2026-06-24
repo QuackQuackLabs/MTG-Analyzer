@@ -2,7 +2,7 @@
 search (`simulation/battle_search.py`). The headline guarantee is the **2.1 gate** — the explicit model
 under the heuristic policy must reproduce the production engine's ranking, so search built on it is
 trustworthy. Search itself is exercised for determinism + sanity, not pinned to magnitudes (it is a
-prototype, and the verdict is that it does not change the ordinal — see docs/simulator-v2-roadmap.md)."""
+prototype, and the verdict is that it does not change the ordinal — see project-plan.md → Phase 9)."""
 
 from __future__ import annotations
 

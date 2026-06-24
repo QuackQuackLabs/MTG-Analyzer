@@ -440,7 +440,7 @@ def test_anchor_grind_out_values_aggro_1v1() -> None:
 
 # --- Stage 0.2/0.3 — LOTR ordinal anchor (real-deck ground truth) --------------------------------
 # Jacob's experienced-play ranking of the six LOTR decks, strongest → weakest. This is the first POM
-# *ordinal* ground-truth fixture (docs/lotr-sim-validation-findings.md): the literature does not support
+# *ordinal* ground-truth fixture (project-plan.md → Phase 9 Appendix A): the literature does not support
 # fitting a heuristic sim to a logged corpus, so an ordinal ranking is the honest calibration signal.
 LOTR_RANKING = ["Sauron", "Tom Bombadil", "Galadriel", "Gandalf the White", "Sméagol", "Frodo and Sam"]
 
