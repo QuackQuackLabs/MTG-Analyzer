@@ -4,10 +4,9 @@
 > ordering and framing of the older A–H workstream tracker in
 > [project-plan.md](../project-plan.md) → Phase 9 (the A–H *letters* are preserved and mapped to the
 > new stages in §6 for continuity with shipped work). It is motivated by
-> [simulator-research-2026-06.md](simulator-research-2026-06.md) (external literature) and
-> [simulator-realism-research.md](simulator-realism-research.md) (balance/V&V/politics literature),
-> and triggered by [lotr-sim-validation-findings.md](lotr-sim-validation-findings.md) (the validation
-> that proved the current model ranks decks ~inverted).
+> [simulator-research.md](simulator-research.md) (the literature reference — Part II external
+> search/opponent-modeling synthesis + Part I balance/V&V/politics), and triggered by the LOTR pod
+> validation that proved the current model ranks decks ~inverted (**Appendix A** below).
 >
 > Status of every item is tracked in **project-plan.md** (single source of truth per CLAUDE.md); this
 > doc holds the *plan and the why*.
@@ -17,8 +16,8 @@
 Two converging signals:
 1. **Empirical:** a full 15-pod LOTR sweep ranks the decks **near-perfectly inverted** vs. experienced
    play (rank-distance 16/18). Root cause: the model is **monocausal on speed**, and its "clock"
-   actually measures *commander-deploy* turn, not *win* turn ([validation findings](lotr-sim-validation-findings.md)).
-2. **Theoretical:** the literature ([research synthesis](simulator-research-2026-06.md)) says realistic
+   actually measures *commander-deploy* turn, not *win* turn (**Appendix A**).
+2. **Theoretical:** the literature ([research synthesis](simulator-research.md) Part II) says realistic
    relative win rates in a strategic, hidden-info, multiplayer game come from **searched decisions over
    a stochastic-but-abstract state**, with politics as a **secondary opponent-modeling layer** — not
    from a single power/speed scalar nudged by hand-tuned knobs.
@@ -59,7 +58,7 @@ The current output was demonstrably wrong; fixed before building anything on top
   instant turn-3 combo. The combo-clock *blend* was also narrowed to combo-**primary** decks only.
   Backward-compatible: synthetic/combo-primary profiles (`combo_clock=None`) fall back to `clock_mean`.
 - **0.2 — ✅ Recorded the LOTR ordinal anchor** (`Sauron > Tom Bombadil > Galadriel > Gandalf > Sméagol >
-  Frodo & Sam`) as `LOTR_RANKING` in the test suite + [lotr-sim-validation-findings.md](lotr-sim-validation-findings.md).
+  Frodo & Sam`) as `LOTR_RANKING` in the test suite + **Appendix A**.
 - **0.3 — ✅ Added `test_anchor_lotr_ordinal_ranking`** — sweeps all 15 four-pods over snapshotted deck
   profiles and gates rank-distance ≤ 12 (catches re-inversion; ratchets down as Stage 1 lands) + pins the
   exact bug (Frodo & Sam < 45% and not the strongest deck).
@@ -240,3 +239,61 @@ bet — gated on 2.1 proving the abstract state is expressive enough. Stage 3 de
 | G — robustness probes | later | later (needs broader deck pool) |
 | H — corpus fit | = 9C, blocked | **X2** (downgraded to opportunistic / anchor-gated) |
 | **NEW** | — | **Stage 2 — searched decisions (determinization + IS-MCTS)** — the piece the research adds. **Prototyped** (`battle_search.py`): 2.1 forward-model gate passed; flat determinized search measured to add skill-texture but no ranking gain → full IS-MCTS build deferred |
+
+---
+
+## Appendix A — LOTR pod validation (the finding that triggered this replan)
+
+> **Status: RESOLVED by Stage 0 + Stage 1** (rank-distance 16 → 4; the original inversion is gone). This
+> appendix preserves the 2026-06-22 diagnostic that motivated the replan — folded here from the former
+> `lotr-sim-validation-findings.md`. The reproduction scripts remain in
+> [research-assets/](research-assets/).
+
+A full sweep of all `C(6,4) = 15` four-player pods over the six saved LOTR decks (Frodo and Sam,
+Galadriel, Gandalf the White, Sauron, Sméagol, Tom Bombadil), 2000 games/pod, seed 1, combos on, found
+the simulator's ranking **near-perfectly inverted** vs. an experienced player's ground truth
+(rank-distance 16/18, where 18 = perfectly inverted). Fair share in a 4-pod = 25%.
+
+**Sim vs. experienced-player ranking (pre-fix):**
+
+| Player rank (experience) | Sim rank | Sim avg win% | Pod wins (of 10) |
+|---|---|---|---|
+| 1. Sauron        | 6th | 4%  | 0 |
+| 2. Tom Bombadil  | 3rd | 21% | 1 |
+| 3. Galadriel     | 4th | 17% | 0 |
+| 4. Gandalf       | 5th | 5%  | 0 |
+| 5. Sméagol       | 2nd | 28% | 4 |
+| 6. Frodo and Sam | **1st** | **74%** | **10** |
+
+**Root cause — the "clock" measured commander DEPLOY turn, not WIN turn.** Raw goldfish signals
+(1500 games) showed real win speeds (combo-assembly turns) bunched **T8.5–T10.9** — the decks are nearly
+identical in kill-speed — yet the clock driving the sim ranged T3.5→T9.6, a spread that was almost
+entirely commander *deploy* turn:
+
+| Deck | Cmdr online | Combo assembles | Archetype (sim) | → Clock used | Sim win% |
+|---|---|---|---|---|---|
+| Frodo & Sam | T2.0 | T9.1  | aggro    | **T3.5** | 74% |
+| Sméagol     | T3.3 | T10.9 | aggro    | T4.8 | 28% |
+| Galadriel   | T5.1 | T8.8  | combo    | T7.7 | 17% |
+| Tom Bombadil| T5.3 | T8.5  | combo    | T7.7 | 21% |
+| Gandalf     | T5.0 | T9.6  | midrange | T8.4 | 5%  |
+| Sauron      | T7.0 | T10.6 | combo    | T9.6 | 4%  |
+
+Two compounding errors: (1) decks with expensive commanders read as "slow = weak," backwards for
+resilient grind/value decks; (2) an aggro deck with an *incidental* combo (Frodo, classed `aggro` by the
+`creatures ≥ 27` rule) skipped the combo-clock blend yet still scored an **instant combo win at T3.5** in
+`_play_match` because `has_combo` was true — aggro speed *and* combo lethality, even though its combo
+can't assemble until ~T9.
+
+**The fix (Stage 0.1) and its effect.** A one-change counterfactual — set the clock to the real
+combo-assembly turn for combo decks — already halved the error (rank-distance 16 → 10; Frodo 74%→36%,
+Tom/Galadriel rose). Residual error was diagnostic of the deeper **monocausal-on-speed** problem: the
+model treated interaction (Sauron has 13), resilience, protection, and inevitability as minor nudges on a
+clock-determined outcome. **Stage 1's mid-game attrition/inevitability win path** closed the rest (16 → 4;
+Sauron dead-last → 2nd, Frodo 1st → last). The ordinal `Sauron > Tom > Galadriel > Gandalf > Sméagol >
+Frodo` is now captured as `LOTR_RANKING` in the test suite (`test_anchor_lotr_ordinal_ranking`, gate
+≤ 12), the first calibration anchor.
+
+**Reproduce** (from `app/` with the venv active): `python docs/research-assets/run_all_pods.py` — runs
+all 15 pods + the per-deck summary; `diagnose.py` dumps the raw goldfish signals; `experiment.py` is the
+clock-source counterfactual. CLI spot-check: `mtg battle <four decks> --games 2000`.

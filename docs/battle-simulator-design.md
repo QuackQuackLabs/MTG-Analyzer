@@ -1,6 +1,13 @@
-# Battle Simulator — Design Scope
+# Battle Simulator — Design Scope (original design; largely shipped)
 
-**Status:** proposed (Phase 9). **Author:** design draft.
+> **⚠ HISTORICAL DESIGN DOC.** This is the *original* Phase 9 design draft. Most of it shipped; its
+> Phase A–D plan (§8) is **superseded** by the staged roadmap in
+> [simulator-v2-roadmap.md](simulator-v2-roadmap.md) (Stages 0–3, which the §6 continuity map ties back
+> to the A–H workstreams). Live status is in [project-plan.md](../project-plan.md) → Phase 9 (the single
+> source of truth). Kept for the *why* behind the BattleProfile abstraction, the match loop, and the
+> calibration/honesty discipline — all still current. The research backing is
+> [simulator-research.md](simulator-research.md).
+
 **Relationship to existing sim:** extends `simulation/goldfish.py` (single-deck consistency) into a
 heuristic **deck-vs-deck match** model for **1v1** and **4-player** Commander.
 

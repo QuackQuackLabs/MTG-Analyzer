@@ -369,12 +369,12 @@ and phasing: **[docs/battle-simulator-design.md](docs/battle-simulator-design.md
 #### Simulator realism & calibration — research workstreams (A–H)
 *From the 2026-06-20 four-track literature review. **This is the authoritative status tracker.** The
 research rationale (the stochastic-structure thesis, V&V/POM reasoning) and academic references live in
-**[docs/simulator-realism-research.md](docs/simulator-realism-research.md)** — a reference doc only, no
+**[docs/simulator-research.md](docs/simulator-research.md)** (Part I) — a reference doc only, no
 status.* **Naming note:** these letters are the *research workstreams* and are **distinct** from the
 "Phase A/B/C" build phases above (e.g. workstream C = metagame layer, not the Phase C calibration work).
 > **⚠ SUPERSEDED (2026-06-23) by [docs/simulator-v2-roadmap.md](docs/simulator-v2-roadmap.md).** A deep
-> external-literature review ([docs/simulator-research-2026-06.md](docs/simulator-research-2026-06.md))
-> + a 15-pod LOTR validation ([docs/lotr-sim-validation-findings.md](docs/lotr-sim-validation-findings.md))
+> external-literature review ([docs/simulator-research.md](docs/simulator-research.md) Part II)
+> + a 15-pod LOTR validation (roadmap Appendix A)
 > re-prioritized this work into a staged roadmap (Stage 0 correctness → Stage 1 richer heuristic equity
 > → Stage 2 determinization+IS-MCTS search → Stage 3 opponent-model politics; POM-ordinal validation
 > primary). The A–H letters below are preserved and **mapped to the new stages in the roadmap §6**; the
@@ -776,8 +776,8 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   sim ranks decks **~inverted** vs. experienced play (rank-distance 16/18) — root cause: the "clock"
   measured *commander-deploy* turn, not *win* turn, and an aggro deck merely *containing* a combo scored
   **instant turn-3 combo kills**. A deep external-literature review
-  ([docs/simulator-research-2026-06.md](docs/simulator-research-2026-06.md)) + the validation
-  ([docs/lotr-sim-validation-findings.md](docs/lotr-sim-validation-findings.md)) drove a research-grounded
+  ([docs/simulator-research.md](docs/simulator-research.md) Part II) + the validation (roadmap
+  Appendix A) drove a research-grounded
   **replan** ([docs/simulator-v2-roadmap.md](docs/simulator-v2-roadmap.md)): Stage 0 correctness → Stage 1
   multi-factor equity → Stage 2 determinization+IS-MCTS search → Stage 3 opponent-model politics (POM-
   ordinal validation primary; corpus-NLL fitting downgraded). **Stage 0 shipped:** `BattleProfile.combo_clock`

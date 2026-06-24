@@ -2,7 +2,7 @@
 
 **Status:** ✅ **shipped F1–F5** (workstream F; live status in
 [project-plan.md](../project-plan.md) → Phase 9). This doc is the design spec + validation targets;
-the research-rationale companion is [simulator-realism-research.md](simulator-realism-research.md).
+the research-rationale companion is [simulator-research.md](simulator-research.md) (Part I §F).
 **Scope:** re-base the battle sim's threat-assessment, win-attempt, and "gang-up" mechanics on how real
 Commander pods behave — casual/mid *and* cEDH — rather than generic multiplayer-AI theory. Grounded in
 a two-track community-strategy review (sources at end).
