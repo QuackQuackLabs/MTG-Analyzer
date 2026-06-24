@@ -549,8 +549,8 @@ def _cmd_battle(args: argparse.Namespace) -> int:
               "Power = learned strength (the ranking); archenemy = who the table gangs up on; win rate =\n"
               "the POLICED outcome (it compresses, because the table correctly answers the strongest deck).\n")
         print(f"  #  {'Deck':18} {'power':>6}  {'archenemy%':>10}  {'win%':>5}")
-        for d in meta.decks:
-            print(f"  {d.power_rank}  {d.name:18} {d.power_level:>+6.2f}  {d.archenemy_rate:>10.0%}  {d.win_rate:>5.0%}")
+        for md in meta.decks:
+            print(f"  {md.power_rank}  {md.name:18} {md.power_level:>+6.2f}  {md.archenemy_rate:>10.0%}  {md.win_rate:>5.0%}")
         print(f"\n  (Fair share = {1/meta.pod_size:.0%}. Power >0 = above fair / a known threat the informed "
               "table gangs up on; <0 = a deck it leaves alone at game start. Under informed play the "
               "strongest deck draws the most heat and its win rate is policed toward parity — power lives "

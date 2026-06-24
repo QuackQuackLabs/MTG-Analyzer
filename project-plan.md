@@ -256,9 +256,18 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       outlet, then names the payoff card in the deck that converts it (or flags *no outlet — gap*).
       Adds a **kill-on-sight** line (combo pieces to protect). Near-duplicate combo variants are
       capped (top 6 by popularity, rest collapsed to a count) to keep guides to ~1 page.
+- [x] **Combo-less decks get the same depth** (in `guide.py`): guides no longer collapse when a deck
+      has no Spellbook combo. The win plan is recovered from the deck itself — deck-wide **finishers**
+      detected from card text (drain/aristocrats, group-slug, overrun/anthem, combat-amplifier, burn,
+      alt-win) reusing the outlet machinery; an **Engine lines** section parallel to Combo lines; a
+      kill-on-sight line over the detected payoffs; and an **archetype label** (from real deck signals:
+      creatures, instants/sorceries, token-makers, symmetric draw, +1/+1 counters, interaction, ramp)
+      that tunes the Game plan + Sequencing prose. Fixes thin/mislabeled guides for precon-level decks
+      (e.g. Bloomburrow Zoraline now reads as aristocrats with a Psychosis-Crawler/drain kill, not
+      "Combat"). Same grounded-no-invented-strategy rule.
 - *Validated on real data: 1,043 distinct cards imported (0 unresolved); Sol Ring tracked across
   Available + 3 decks; Henzie guide lists all 3 combos with steps; Galadriel's infinite-token engine
-  correctly names Craterhoof Behemoth as its outlet.* 97 tests; ruff/mypy clean.
+  correctly names Craterhoof Behemoth as its outlet.* 139 tests; ruff/mypy clean.
 
 ### Phase 7 — Polish & quality  `[x]`
 - [x] **Saved deck library** (`data/deck_library.py`): `mtg deck save|list|remove|diff`; all deck

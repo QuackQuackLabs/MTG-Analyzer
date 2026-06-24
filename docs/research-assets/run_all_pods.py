@@ -1,6 +1,5 @@
 """Run every 4-deck pod (C(6,4)=15) of the LOTR decks through the battle simulator and summarize."""
 from itertools import combinations
-from pathlib import Path
 
 from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.data.db import CardDatabase

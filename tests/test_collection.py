@@ -145,3 +145,23 @@ def test_guide_combo_engine_flags_missing_outlet() -> None:
     md = build_guide(deck, report, sim=None, combos=[combo], edhrec=[])
     assert "no outlet in the deck" in md
     assert "mana sink" in md
+
+
+def test_guide_noncombo_deck_recovers_win_plan() -> None:
+    """A combo-less deck still gets real win conditions, an Engine lines section, and an
+    archetype-shaped game plan (the depth no longer depends on a Spellbook combo)."""
+    cmd = make_card("Cmdr", type_line="Legendary Creature")
+    drain = make_card("Blood Artist Jr.", type_line="Creature",
+                      oracle_text="Whenever a creature dies, each opponent loses 1 life.")
+    body = make_card("Token Bat", type_line="Creature", oracle_text="Flying.")
+    deck = ResolvedDeck(name="aristocrats", entries=[
+        ResolvedEntry(quantity=1, section="commander", requested_name="Cmdr", card=cmd),
+        ResolvedEntry(quantity=1, section="main", requested_name="Blood Artist Jr.", card=drain),
+        ResolvedEntry(quantity=1, section="main", requested_name="Token Bat", card=body),
+    ])
+    report = analyze(deck)
+    md = build_guide(deck, report, sim=None, combos=[], edhrec=[])
+    assert "## Engine lines" in md
+    assert "Drain / aristocrats" in md
+    assert "Protect (kill-on-sight):** Blood Artist Jr." in md
+    assert "aristocrats deck" in md  # archetype label flows into the game plan

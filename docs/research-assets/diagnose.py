@@ -4,7 +4,7 @@ from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.data.deck_library import load_deck_text
 from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.resolve import resolve_deck
-from mtg_analyzer.simulation.battle import build_profile, _creature_count, _archetype, _counts
+from mtg_analyzer.simulation.battle import build_profile, _creature_count
 from mtg_analyzer.simulation.goldfish import simulate
 from mtg_analyzer.cli import _find_deck_combos
 
