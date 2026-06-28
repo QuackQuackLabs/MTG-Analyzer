@@ -28,10 +28,6 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 
-# Personal exports dropped in for testing (keep the README only)
-samples/*
-!samples/README.md
-
 # Env / secrets
 .env
 .env.local

@@ -26,7 +26,9 @@ decks never leave your computer.
 - **Simulate consistency** — goldfish thousands of games: keepable opening hands, mana screw/flood,
   and what turn your commander comes down.
 - **Simulate matchups** — a heuristic 1v1 or 4-player pod "who wins" model with politics and
-  sensitivity bands (relative win rates, *not* a rules engine).
+  sensitivity bands (relative win rates, *not* a rules engine). Across a **pool** of decks it learns a
+  power-level ranking (tiers + who gets ganged up on) and a head-to-head matrix of which deck types you
+  beat vs. should fear.
 - **Ask rules & interaction questions** — grounded in the Comprehensive Rules, official card
   rulings, and combo data, so the answer cites real sources.
 - **Get upgrade recommendations** — gap-filling adds + lowest-impact cuts, EDHREC-blended,
@@ -80,17 +82,18 @@ Open this folder in Claude Code (`claude` in the project directory, or the VS Co
 just ask. Claude automatically reads [CLAUDE.md](CLAUDE.md) and the domain skills, runs the right
 `mtg` commands, and interprets the output for you. Example asks:
 
-- *"Import my collection from `samples/collection.csv`."*
-- *"Load the deck in `samples/MyDeck.txt`, analyze it, and tell me what to upgrade under $30."*
+- *"Import my collection from `data/inventory.csv`."*
+- *"Load the deck in `data/decks/MyDeck.txt`, analyze it, and tell me what to upgrade under $30."*
 - *"Simulate my deck — how consistent are my opening hands and when does my commander land?"*
 - *"Run a 4-player battle between these decks and explain who wins and why."*
+- *"Rank all my decks by power level and tell me which deck types each one beats vs. should fear."*
 - *"What happens when Card A and Card B interact? Cite the rulings."*
 - *"Build me a deck around <commander> from cards I own, and a shopping list for the gaps."*
 - *"After tonight's game, log the result so the matchup model learns from it."*
 
-To bring your own data in, drop your exports into [`samples/`](samples/) (decklists from
-Archidekt/Moxfield/Arena/MTGO as `.txt`; collections from ManaBox/Moxfield/Deckbox as `.csv`) — see
-[samples/README.md](samples/README.md). Those files are gitignored and stay on your machine.
+To bring your own data in, drop your exports into [`data/`](data/) — decklists from
+Archidekt/Moxfield/Arena/MTGO as `.txt` in `data/decks/`; collections from ManaBox/Moxfield/Deckbox
+as `.csv` (e.g. `data/inventory.csv`). Those files are gitignored and stay on your machine.
 
 ## 4. Command reference (optional — for driving it directly)
 
@@ -112,17 +115,18 @@ deck name **or** a file path.
 | `mtg deck recommend <deck> [--budget $] [--no-sim]` | Cuts + adds, EDHREC-blended, sim-aware, budget-capped |
 | `mtg deck build "<commander>" [--budget $] [--owned-only]` | Build a legal 100 from your collection + shopping list |
 | `mtg deck suggest-commanders` | Legal commanders you own, by popularity |
-| `mtg deck guide <deck> \| --all` | Generate a pilot's strategy guide (markdown) |
+| `mtg deck guide <deck> \| --all [--pod]` | Generate a pilot's strategy guide (markdown); `--pod` appends pod-matchup outlook + 1v1 tendencies (slow — sweeps all saved decks) |
 | `mtg deck save <name> <file>` / `list` / `remove <name>` / `diff <a> <b>` | Manage saved decks; compare two decklists |
-| `mtg battle <decks…> [--games N] [--calibrate]` | Heuristic 1v1/4-player matchup sim (2–4 decks) |
+| `mtg battle <decks…> [--games N] [--preset casual\|mid\|cedh] [--calibrate] [--sensitivity]` | Heuristic 1v1/4-player matchup sim (2–4 decks) |
+| `mtg battle <pool 5+…> --metagame` | Power-level ranking across every pod in a pool (tiers, archenemy %, naive vs. informed win rates) |
 | `mtg matchlog add <pod…> --winner <deck>` / `form` / `list` | Record real game results (the corpus the battle sim learns from) |
 
 Run any command with `--help` for its full options.
 
 ## Where your data lives & privacy
 
-- Your card database, decks, collection, generated guides, and match log all live under `data/`
-  (and `samples/`), which is **gitignored** — none of it is committed or pushed.
+- Your card database, decks, collection, generated guides, and match log all live under `data/`,
+  which is **gitignored** — none of it is committed or pushed.
 - The card DB is fully regenerable: delete `data/` and run `mtg data refresh` + `mtg rules refresh`.
 - Only synthetic test fixtures (under `tests/fixtures/`) are tracked — never real collections.
 
@@ -146,12 +150,14 @@ scope and conventions.
 
 ## Tech & status
 
-- **Engine:** Python 3.11+, SQLite, numpy/scipy, httpx, pydantic. A thin FastAPI app exists as a
-  seed for a future web UI; the engine is intentionally UI-agnostic.
+- **Engine:** Python 3.11+, SQLite, numpy/scipy, httpx, pydantic. The engine is UI-agnostic; all
+  orchestration lives behind a service facade (`AnalyzerService`) that both the CLI and the coming web
+  API call. A thin FastAPI app is the seed for that UI.
 - **Data sources:** [Scryfall](https://scryfall.com/docs/api) (cards, rulings, bulk),
   [Commander Spellbook](https://commanderspellbook.com/) (combos), EDHREC (recommendation stats).
-- **Status:** feature-complete for local, chat-driven use (Phases 0–8); the battle/matchup simulator
-  (Phase 9) is in active development. Full roadmap in [project-plan.md](project-plan.md).
+- **Status:** feature-complete for local, chat-driven use; the battle/matchup simulator has landed
+  (validated against experienced-player rankings). A **web UI (Phase 10)** is the next frontier — the
+  engine foundations for it are in place. Full roadmap in [project-plan.md](project-plan.md).
 
 ## Legal
 

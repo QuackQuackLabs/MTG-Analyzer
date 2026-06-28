@@ -45,6 +45,10 @@ mypy backend    # type-check clean
 - Type-hint everything; use Pydantic models for domain objects.
 - Add or update tests for any behavior change (tests run with **no network** — use fixtures/mocks).
 - Keep the engine importable and testable independent of FastAPI — the API is a thin adapter.
+- **Put multi-step orchestration in `service.AnalyzerService`, not in CLI handlers or API routes.**
+  Both front-ends call the service and only format its returned models; long sims run through
+  `jobs.JobRunner`. Extend a service method rather than re-wiring the engine in a route. (See the
+  "Orchestration rule" in [CLAUDE.md](CLAUDE.md).)
 
 ## Workflow
 

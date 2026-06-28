@@ -47,12 +47,14 @@ backend/mtg_analyzer/        Pure-Python engine (the value lives here; UI is swa
   models/       Pydantic domain models: Card, Deck, Inventory, Ruling
   ingest/       Decklist + inventory file parsers (Arena/Moxfield/Archidekt txt, ManaBox CSV)
   rules/        Comprehensive Rules corpus (download/parse + SQLite/FTS5 store), legality, rulings
-  analysis/     Category/curve analysis, deck scoring
+  analysis/     Category/curve analysis, deck scoring, pilot guides + pod-matchup sections
   combos/       Commander Spellbook: live find-my-combos client + local variant cache/matcher
-  simulation/   Hypergeometric (scipy) + Monte-Carlo (numpy) goldfish simulator
+  simulation/   Hypergeometric (scipy) + Monte-Carlo (numpy) goldfish + heuristic battle/metagame sim
   recommend/    Recommender + budget shopping-list / deck-construction engine
-  api/          FastAPI app — thin layer over the engine
-frontend/                    React + Vite + TypeScript SPA (later phase)
+  service.py    Orchestration FACADE (AnalyzerService): deck-name → engine models; CLI + API both call it
+  jobs.py       Background JobRunner for long sims (metagame / 1v1 matrix) — pollable progress/result
+  api/          FastAPI app — thin layer over the service facade
+frontend/                    React + Vite + TypeScript SPA (next phase — see project-plan §Phase 10)
 data/                        Local card DB, bulk cache, rules text (gitignored, regenerable)
 tests/                       pytest
 .claude/skills/              Project domain skills (see Golden rule 3)
@@ -61,6 +63,13 @@ tests/                       pytest
 **Stack:** Python 3.11+, FastAPI + uvicorn, SQLite, numpy/scipy, httpx, pydantic. Frontend is
 React/Vite/TS. Keep the engine importable and testable independent of FastAPI — the API is a thin
 adapter, so the interface stays swappable and publishable later.
+
+**Orchestration rule:** all multi-step wiring (resolve deck → fetch combos → analyze → goldfish →
+battle-profile → metagame/guide/recommend) lives in **`service.AnalyzerService`** — **not** in CLI
+handlers or API routes. Both front-ends construct a service, call it, and only *format* the returned
+models (`service.to_jsonable` serializes any return for the API). Long sims run through
+`jobs.JobRunner` (the metagame sweep is minutes — never a synchronous request). Don't re-duplicate
+orchestration in a route; add/extend a service method.
 
 ## Conventions
 
