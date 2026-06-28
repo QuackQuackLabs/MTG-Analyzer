@@ -29,7 +29,11 @@ def build_guide(
     sim: SimResult | None,
     combos: list[Combo],
     edhrec: list[EdhrecCard],
+    extra_sections: list[str] | None = None,
 ) -> str:
+    """Render the pilot guide. `extra_sections` (pre-rendered markdown, e.g. pod-matchup / matchup-
+    tendencies from `analysis.pod_sections`) are appended before the footer — passed in rather than
+    computed here so `analysis` stays independent of the `simulation` battle layer."""
     commanders = ", ".join(report.commanders) or "(no commander)"
     name = (deck.name.replace("-", " ").title() if deck.name
             else (report.commanders[0] if report.commanders else "Deck"))
@@ -92,6 +96,8 @@ def build_guide(
     if sim and sim.commander_turn and sim.commander_turn.median is not None:
         lines.append(f"- Commander online ~turn {sim.commander_turn.median}; "
                      f"keepable opening hands {sim.p_keepable_hand:.0%}; screw {sim.screw_rate:.0%}")
+    for section in extra_sections or []:
+        lines += ["", section.rstrip()]
     lines.append("\n_Auto-generated from deck analysis, simulation, and Commander Spellbook combos._")
     # Collapse any accidental double blank lines between sections.
     out: list[str] = []

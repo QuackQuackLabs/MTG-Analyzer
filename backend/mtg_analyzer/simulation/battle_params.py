@@ -15,12 +15,26 @@ MAX_TURNS = 24
 # Added on top of the goldfish "commander online" mean to get a kill-turn ("clock").
 ARCHETYPE_CLOCK: dict[str, tuple[float, float]] = {
     "combo": (2.0, 1.3),
-    "aggro": (1.5, 1.0),
+    # Stage 0.4 (fix #1): the aggro offset is a *pod kill-clock*, not a 1v1 one. A creature deck must
+    # chew through ~3× the life total and up to three blockers' worth of defense to win a 4-player pod —
+    # and this model has no overrun/anthem finisher — so its realized win turn is NOT faster than a value
+    # deck's. The old 1.5 (faster than combo!) made a fast *deploy* clock read as turn-4 pod-lethal, so
+    # aggro became the perennial archenemy yet beatdown converted ~0% — all of the heat, none of the kill.
+    # Centered at midrange now (it still applies early pressure) but with wider variance (explosive draws
+    # vs. fizzles). The deploy-speed kernel that *is* real survives via aggro's higher visibility (1.10).
+    "aggro": (2.8, 1.7),
     "midrange": (2.8, 1.4),
     "control": (3.6, 1.6),
     "grind": (3.6, 1.5),
 }
 DEFAULT_CLOCK: tuple[float, float] = (2.8, 1.4)
+
+# Fix #2 — a deck is "aggro" only if its curve is genuinely low. A blitz/ramp deck that cheats out big
+# threats early (fast commander-online turn + many creatures) is NOT aggro if its mana curve is top-heavy
+# — its win is a grindy value/combo game, not a fast beatdown. Gate the aggro label on average nonland CMC
+# below this (Henzie "Toolbox" Torre: avg CMC 4.3 with 22 cards at 6+ MV → midrange, not aggro; every true
+# aggro deck sits ≤ ~3.2). Without this, creature-count alone misreads big-mana decks as turn-4 threats.
+AGGRO_MAX_AVG_CMC = 3.6
 
 # Win-attempt model. A1 (stochastic grounding): each game draws the deck's REALIZED kill turn from
 # its clock distribution (between-game variance), then a sharp in-game ramp fires the attempt at/after

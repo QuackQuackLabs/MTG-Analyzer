@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import combinations
 
 import numpy as np
@@ -57,19 +57,31 @@ def _protection_count(deck: ResolvedDeck) -> int:
     )
 
 
+def _avg_cmc(report: DeckReport) -> float:
+    """Average nonland mana value from the deck's curve histogram (bucket 7 = '7+', a slight
+    under-count of the true top end — fine, it only sharpens the aggro vs. big-mana distinction)."""
+    total = sum(b.count for b in report.curve)
+    if not total:
+        return 0.0
+    return sum(b.cmc * b.count for b in report.curve) / total
+
+
 def _archetype(
-    creatures: int, online: float, combo_turn: float | None, counts: dict[str, int], has_combo: bool
+    creatures: int, online: float, combo_turn: float | None, counts: dict[str, int], has_combo: bool,
+    avg_cmc: float,
 ) -> str:
     """Classify the deck's *primary* win plan. The combo is primary only when it assembles near the
     deck's natural tempo (combo_turn ≲ commander-online + a small gap) — measured from the goldfish,
     not guessed from creature count. A deck whose combo lands far later (e.g. a fast aristocrats deck
-    that *can* combo) is classified by its faster plan instead."""
+    that *can* combo) is classified by its faster plan instead. Fix #2: a wide *creature* board is only
+    aggro when the curve is genuinely low — a top-heavy blitz/ramp deck that merely cheats big threats out
+    early (high avg CMC) wins a grindy value game, not a fast beatdown, so it is not aggro."""
     control = counts.get("counterspell", 0) + counts.get("removal", 0)
     if has_combo and combo_turn is not None and combo_turn <= online + P.COMBO_PRIMARY_GAP:
         return "combo"
     if has_combo and combo_turn is None and creatures < 22:
         return "combo"  # no goldfish combo signal: fall back to the old creature-light heuristic
-    if creatures >= 27 and online <= 4.5:
+    if creatures >= 27 and online <= 4.5 and avg_cmc < P.AGGRO_MAX_AVG_CMC:
         return "aggro"
     if control >= 12 and online >= 5:
         return "control"
@@ -92,7 +104,7 @@ def build_profile(
     has_combo = bool(report.combos)
     combo_turn = sim.combo_turn.mean if sim and sim.combo_turn and sim.combo_turn.mean is not None else None
     combo_count = sim.combo_count if sim else 0
-    archetype = _archetype(creatures, online, combo_turn, counts, has_combo)
+    archetype = _archetype(creatures, online, combo_turn, counts, has_combo, _avg_cmc(report))
 
     off, sd = P.ARCHETYPE_CLOCK.get(archetype, P.DEFAULT_CLOCK)
     clock_mean = round(online + off, 2)
@@ -591,6 +603,21 @@ def simulate_match(
     )
 
 
+def power_tier(power_level: float) -> str:
+    """Canonical S→D meta-strength tier from the learned power level. Midpoint thresholds (not round
+    numbers) so two decks that DISPLAY the same rounded power can't split across a tier boundary.
+    This is *realized* metagame strength — distinct from the build-based Bracket from analysis()."""
+    if power_level >= 0.085:
+        return "S"
+    if power_level >= 0.025:
+        return "A"
+    if power_level >= -0.025:
+        return "B"
+    if power_level >= -0.085:
+        return "C"
+    return "D"
+
+
 @dataclass
 class DeckMetagameStats:
     name: str
@@ -598,6 +625,16 @@ class DeckMetagameStats:
     power_level: float       # the learned metagame-knowledge prior (win_rate − 1/pod_size); >0 = above fair
     win_rate: float          # avg win rate across every pod (POLICED outcome when informed=True)
     archenemy_rate: float    # avg share of turns the deck was the table's consensus archenemy
+    naive_win: float         # avg win rate with NO learned prior (the unadapting-table baseline)
+    pod_wins: int = 0        # # of pods this deck had the highest naive win rate in
+    naive_min: float = 0.0   # this deck's worst single-pod naive win rate...
+    naive_min_pod: list[str] = field(default_factory=list)  # ...and the other decks in that pod
+    naive_max: float = 0.0   # best single-pod naive win rate...
+    naive_max_pod: list[str] = field(default_factory=list)  # ...and the other decks in that pod
+
+    @property
+    def tier(self) -> str:
+        return power_tier(self.power_level)
 
 
 @dataclass
@@ -612,18 +649,22 @@ class MetagameResult:
 
 def _meta_sweep(
     by: dict[str, BattleProfile], pods: list[tuple[str, ...]], names: list[str], games: int, seed: int,
-) -> tuple[dict[str, float], dict[str, float]]:
-    """One full pass over every pod at the current `WINRATE_PRIOR_W`/priors → (win rates, archenemy rates)."""
+) -> tuple[dict[str, float], dict[str, float], dict[tuple[str, ...], dict[str, float]]]:
+    """One full pass over every pod at the current `WINRATE_PRIOR_W`/priors → (avg win rates,
+    avg archenemy rates, per-pod win rates {pod: {deck: win}})."""
     wsum = {n: 0.0 for n in names}
     aesum = {n: 0.0 for n in names}
     appear = {n: 0 for n in names}
+    per_pod: dict[tuple[str, ...], dict[str, float]] = {}
     for pod in pods:
         res = simulate_match([by[n] for n in pod], games=games, seed=seed)
+        per_pod[pod] = {ds.name: ds.win_rate for ds in res.decks}
         for ds in res.decks:
             wsum[ds.name] += ds.win_rate
             aesum[ds.name] += ds.archenemy_rate
             appear[ds.name] += 1
-    return ({n: wsum[n] / appear[n] for n in names}, {n: aesum[n] / appear[n] for n in names})
+    return ({n: wsum[n] / appear[n] for n in names},
+            {n: aesum[n] / appear[n] for n in names}, per_pod)
 
 
 def simulate_metagame(
@@ -661,15 +702,20 @@ def simulate_metagame(
     saved_priors = {p.name: p.win_prior for p in profiles}
     wr: dict[str, float] = {n: 0.0 for n in names}
     aer: dict[str, float] = {n: 0.0 for n in names}
+    naive_wr: dict[str, float] = {n: 0.0 for n in names}
     used = 0
     converged = False
     try:
+        # Phase 0 — naive baseline (no learned prior; the table doesn't adapt). The canonical results
+        # table reports this alongside the informed (policed) win rate — their gap is the honest band.
+        P.WINRATE_PRIOR_W = 0.0
+        naive_wr, _, naive_pods = _meta_sweep(by, pods, names, games, seed)
         # Phase 1 — learn the power levels (damped fictitious play at the stable weight).
         P.WINRATE_PRIOR_W = w
         prev: dict[str, float] | None = None
         for it in range(max(1, iters)):
             used = it + 1
-            wr, aer = _meta_sweep(by, pods, names, games, seed)
+            wr, aer, _ = _meta_sweep(by, pods, names, games, seed)
             for p in profiles:
                 p.win_prior = d * p.win_prior + (1.0 - d) * (wr[p.name] - fair)
             if prev is not None and max(abs(wr[n] - prev[n]) for n in names) < tol:
@@ -680,20 +726,80 @@ def simulate_metagame(
         # Phase 2 — informed table: KNOW the power levels and target by them (one strong reporting pass).
         if informed:
             P.WINRATE_PRIOR_W = iw
-            wr, aer = _meta_sweep(by, pods, names, games, seed)
+            wr, aer, _ = _meta_sweep(by, pods, names, games, seed)
     finally:
         P.WINRATE_PRIOR_W = saved_w
         for p in profiles:
             p.win_prior = saved_priors[p.name]
 
+    # Per-deck naive pod range + pod-win counts (the guides' "best/worst vs …" + pod-wins).
+    pod_wins = {n: 0 for n in names}
+    for d_by in naive_pods.values():
+        pod_wins[max(d_by, key=lambda k: d_by[k])] += 1
+    rng: dict[str, tuple[float, list[str], float, list[str]]] = {}
+    for n in names:
+        rows = sorted(((pod, d_by[n]) for pod, d_by in naive_pods.items() if n in pod),
+                      key=lambda r: r[1])
+        worst, best = rows[0], rows[-1]
+        rng[n] = (worst[1], [x for x in worst[0] if x != n],
+                  best[1], [x for x in best[0] if x != n])
+
     order = sorted(names, key=lambda n: power[n], reverse=True)
     rank = {n: i + 1 for i, n in enumerate(order)}
     decks = [
-        DeckMetagameStats(n, rank[n], round(power[n], 3), round(wr[n], 3), round(aer[n], 3))
+        DeckMetagameStats(
+            n, rank[n], round(power[n], 3), round(wr[n], 3), round(aer[n], 3), round(naive_wr[n], 3),
+            pod_wins=pod_wins[n], naive_min=round(rng[n][0], 3), naive_min_pod=rng[n][1],
+            naive_max=round(rng[n][2], 3), naive_max_pod=rng[n][3],
+        )
         for n in order
     ]
     return MetagameResult(decks=decks, pod_size=pod_size, pods=len(pods),
                           iterations=used, converged=converged, informed=informed)
+
+
+@dataclass
+class OpponentMatchup:
+    name: str
+    archetype: str
+    win_rate: float          # this deck's heads-up win% vs that one opponent
+
+
+@dataclass
+class MatchupStats:
+    name: str
+    archetype: str
+    avg_win: float                   # avg heads-up win% across all opponents
+    by_archetype: dict[str, float]   # avg win% vs each opponent archetype
+    opponents: list[OpponentMatchup]  # sorted best matchup → worst
+
+
+def head_to_head(
+    profiles: list[BattleProfile], *, games: int = 3000, seed: int = 1
+) -> list[MatchupStats]:
+    """Every C(N,2) 1v1 matchup → per-deck matchup tendencies, grouped by opponent archetype.
+    Isolates the PURE matchup — distinct from pod placement (`simulate_metagame`), where politics can
+    gang a deck that wins the duel (the fast decks are the clearest example). Heads-up win rates sum
+    to ~1 per pairing; this is the engine behind the guides' 'Matchup tendencies' section."""
+    by = {p.name: p for p in profiles}
+    names = [p.name for p in profiles]
+    h2h: dict[str, dict[str, float]] = {a: {} for a in names}
+    for a, b in combinations(names, 2):
+        wr = {d.name: d.win_rate for d in simulate_match([by[a], by[b]], games=games, seed=seed).decks}
+        h2h[a][b], h2h[b][a] = wr[a], wr[b]
+    out: list[MatchupStats] = []
+    for a in names:
+        opps = sorted(
+            (OpponentMatchup(b, by[b].archetype, round(h2h[a][b], 3)) for b in names if b != a),
+            key=lambda o: o.win_rate, reverse=True,
+        )
+        groups: dict[str, list[float]] = {}
+        for o in opps:
+            groups.setdefault(o.archetype, []).append(o.win_rate)
+        by_arch = {k: round(sum(v) / len(v), 3) for k, v in groups.items()}
+        avg = round(sum(o.win_rate for o in opps) / len(opps), 3) if opps else 0.0
+        out.append(MatchupStats(a, by[a].archetype, avg, by_arch, opps))
+    return out
 
 
 @dataclass

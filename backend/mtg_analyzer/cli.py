@@ -20,7 +20,6 @@ from typing import Any, TypeVar
 from mtg_analyzer import config
 from mtg_analyzer.combos.client import CommanderSpellbookClient
 from mtg_analyzer.combos.store import ComboStore
-from mtg_analyzer.analysis.guide import build_guide
 from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.data.bulk import BulkDataManager
 from mtg_analyzer.data.collection import export_csv, sync_decks
@@ -31,13 +30,10 @@ from mtg_analyzer.data.match_log import MatchLog
 from mtg_analyzer.ingest.decklist import parse_deck
 from mtg_analyzer.ingest.inventory import parse_inventory_csv
 from mtg_analyzer.ingest.resolve import resolve_deck, resolve_inventory
-from mtg_analyzer.models.card import Card
 from mtg_analyzer.models.combo import Combo, DeckCombos
 from mtg_analyzer.models.deck import ResolvedDeck
 from mtg_analyzer.models.match_log import WIN_METHODS, LoggedGame
-from mtg_analyzer.recommend.builder import build_deck
-from mtg_analyzer.recommend.edhrec import EdhrecCache, EdhrecClient
-from mtg_analyzer.recommend.recommender import apply_swaps, build_recommendations
+from mtg_analyzer.service import AnalyzerService, is_legal_commander_card
 from mtg_analyzer.simulation.battle import build_profile, calibrate_match, simulate_match
 from mtg_analyzer.simulation.goldfish import simulate
 from mtg_analyzer.simulation.sensitivity import analyze_sensitivity
@@ -140,6 +136,12 @@ def _run_network(make_coro: Callable[[], Coroutine[Any, Any, T]], default: T, la
         print(f"  ! {label} unavailable — {type(e).__name__} (offline or rate-limited); skipped.",
               file=sys.stderr)
         return default
+
+
+def _print_notes(svc: AnalyzerService) -> None:
+    """Surface a service's best-effort network notes (offline/rate-limit) on stderr."""
+    for note in svc.notes:
+        print(f"  ! {note}", file=sys.stderr)
 
 
 def _cmd_explain(args: argparse.Namespace) -> int:
@@ -352,17 +354,12 @@ def _cmd_deck_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_deck_analyze(args: argparse.Namespace) -> int:
-    parsed = parse_deck(load_deck_text(args.file))
-    db = CardDatabase()
-    try:
-        deck = resolve_deck(db, parsed)
-        combos = [] if args.no_combos else _find_deck_combos(deck)
-        report = analyze(deck, included_combos=combos)
-    finally:
-        db.close()
+    with AnalyzerService() as svc:
+        report = svc.analyze_deck(args.file, combos=not args.no_combos).report
+        _print_notes(svc)
 
     cmd = ", ".join(report.commanders) or "(none)"
-    print(f"{report.name or parsed.source_format} — Commander: {cmd}  [{report.identity}]")
+    print(f"{report.name or args.file} — Commander: {cmd}  [{report.identity}]")
     v = report.validation
     print(f"\nLegality: {'LEGAL' if v.legal else 'ILLEGAL'}  ({v.card_count} cards)")
     for issue in v.issues:
@@ -407,35 +404,13 @@ def _find_deck_combos(deck: ResolvedDeck) -> list[Combo]:
 
 
 def _cmd_deck_recommend(args: argparse.Namespace) -> int:
-    parsed = parse_deck(load_deck_text(args.file))
-    db = CardDatabase()
-    store = InventoryStore()
-    cache = EdhrecCache()
-    try:
-        deck = resolve_deck(db, parsed)
-        combos = _find_deck_combos(deck)  # best-effort; used to protect combo pieces from cuts
-        report = analyze(deck, included_combos=combos)
-        protected = {u.name for c in combos for u in c.uses if u.name}
-        # Only cards Available (not committed to another deck) + this deck's own cards.
-        slug = slugify(args.file) if DeckLibrary().get(args.file) else None
-        owned = store.available_oracles(for_deck=slug)
+    with AnalyzerService() as svc:
+        result = svc.recommend(args.file, budget=args.budget, sim=not args.no_sim, games=args.games)
+        _print_notes(svc)
+    recs = result.recommendations
+    before, after = result.sim_before, result.sim_after
 
-        async def fetch() -> list:
-            async with EdhrecClient(cache=cache) as client:
-                return await client.commander_cards(report.commanders)
-
-        edhrec_cards = asyncio.run(fetch())
-        before = None if args.no_sim else simulate(deck, games=args.games, seed=1)
-        recs = build_recommendations(deck, report, edhrec_cards, db, owned=owned,
-                                     budget=args.budget, sim=before, protected=protected)
-        after = None if args.no_sim else simulate(apply_swaps(deck, recs, db),
-                                                  games=args.games, seed=1)
-    finally:
-        cache.close()
-        store.close()
-        db.close()
-
-    print(f"Recommendations for {recs.commander}  [{report.identity}]")
+    print(f"Recommendations for {recs.commander}  [{result.identity}]")
 
     if recs.adds:
         print(f"\nADD — fills your gaps, synergy-ranked from EDHREC ({len(recs.adds)}):")
@@ -479,14 +454,10 @@ def _sim_delta(label: str, before: float, after: float, *, pct: bool = False,
 
 
 def _cmd_deck_simulate(args: argparse.Namespace) -> int:
-    parsed = parse_deck(load_deck_text(args.file))
-    db = CardDatabase()
-    try:
-        deck = resolve_deck(db, parsed)
-        combos = None if args.no_combos else _find_deck_combos(deck)
-    finally:
-        db.close()
-    r = simulate(deck, combos=combos, games=args.games, on_play=not args.draw)
+    with AnalyzerService() as svc:
+        r = svc.simulate_deck(args.file, games=args.games, on_play=not args.draw,
+                              combos=not args.no_combos)
+        _print_notes(svc)
 
     play = "on the play" if r.on_play else "on the draw"
     print(f"Goldfish simulation — {r.games:,} games ({play})")
@@ -527,34 +498,27 @@ def _cmd_battle(args: argparse.Namespace) -> int:
     elif not 2 <= len(args.decks) <= 4:
         print("Provide 2 decks (1v1) up to 4 decks (pod).", file=sys.stderr)
         return 1
-    db = CardDatabase()
-    profiles = []
-    try:
-        for name in args.decks:
-            deck = resolve_deck(db, parse_deck(load_deck_text(name)))
-            combos = [] if args.no_combos else _find_deck_combos(deck)
-            report = analyze(deck, included_combos=combos)
-            sim = simulate(deck, combos=combos, games=args.sim_games)
-            profiles.append(build_profile(Path(name).stem, deck, report, sim))
-    finally:
-        db.close()
+    with AnalyzerService() as svc:
+        profiles = svc.profiles(args.decks, sim_games=args.sim_games, combos=not args.no_combos)
+        _print_notes(svc)
 
     if args.metagame:
         from mtg_analyzer.simulation.battle import simulate_metagame
         meta = simulate_metagame(profiles, pod_size=args.pod_size, games=args.games, seed=args.seed)
         status = (f"converged in {meta.iterations} passes" if meta.converged
-                  else f"ran {meta.iterations} passes (not yet converged)")
-        print(f"Metagame — all {meta.pods} {meta.pod_size}-deck pods, fictitious-play feedback ({status}).\n"
-              "Assumes an INFORMED table that has learned each deck's power level and targets accordingly.\n"
-              "Power = learned strength (the ranking); archenemy = who the table gangs up on; win rate =\n"
-              "the POLICED outcome (it compresses, because the table correctly answers the strongest deck).\n")
-        print(f"  #  {'Deck':18} {'power':>6}  {'archenemy%':>10}  {'win%':>5}")
+                  else f"{meta.iterations} passes, not yet converged")
+        # Canonical simulation-results table (see docs/sim-results-table-spec.md): caption · rank · deck ·
+        # Tier · Naive · Informed · Archenemy. Sorted by learned power; numerics right-aligned.
+        print(f"{meta.pods} {meta.pod_size}-deck pods · {args.games} games/pod · seed {args.seed} · "
+              f"informed table ({status}) · heuristic — relative, not predictive\n")
+        print(f"  {'#':>2}  {'Deck':24} {'Tier':>4}  {'Naive':>6}  {'Informed':>8}  {'Arch%':>6}")
         for md in meta.decks:
-            print(f"  {md.power_rank}  {md.name:18} {md.power_level:>+6.2f}  {md.archenemy_rate:>10.0%}  {md.win_rate:>5.0%}")
-        print(f"\n  (Fair share = {1/meta.pod_size:.0%}. Power >0 = above fair / a known threat the informed "
-              "table gangs up on; <0 = a deck it leaves alone at game start. Under informed play the "
-              "strongest deck draws the most heat and its win rate is policed toward parity — power lives "
-              "in the ranking + archenemy column, NOT in raw win rate.)")
+            print(f"  {md.power_rank:>2}  {md.name:24} {md.tier:>4}  {md.naive_win:>6.0%}  "
+                  f"{md.win_rate:>8.0%}  {md.archenemy_rate:>6.0%}")
+        print(f"\n  Tier = learned meta strength S→D (≠ build Bracket).  Naive = win% vs. an unadapting "
+              f"table; Informed = win% once the table targets known power (the realistic read, policed "
+              f"toward the {1/meta.pod_size:.0%} fair share).  Arch% = share of turns the table gangs the "
+              "deck. A top deck's Informed win compresses precisely because it draws the heat.")
         return 0
 
     if args.calibrate:
@@ -906,28 +870,23 @@ def _cmd_deck_guide(args: argparse.Namespace) -> int:
         return 1
     guides_dir = config.DATA_DIR / "guides"
     guides_dir.mkdir(parents=True, exist_ok=True)
-    db = CardDatabase()
-    cache = EdhrecCache()
-    try:
+    with AnalyzerService() as svc:
+        pod = None
+        if args.pod:
+            pool = library.names()
+            if len(pool) <= args.pod_size:
+                print(f"--pod needs more than {args.pod_size} saved decks for the pool; "
+                      f"have {len(pool)}.", file=sys.stderr)
+                return 1
+            print(f"Running pod analysis over {len(pool)} decks "
+                  f"(C({len(pool)},{args.pod_size}) pods + 1v1 matrix)… this can take a few minutes.")
+            pod = svc.pod_analysis(pool, pod_size=args.pod_size, games=args.pod_games)
         for name in names:
-            deck = resolve_deck(db, parse_deck(load_deck_text(name)))
-            deck.name = name  # title the guide after the saved deck
-            combos = _find_deck_combos(deck)
-            report = analyze(deck, included_combos=combos)
-            sim = simulate(deck, games=args.games)
-
-            async def fetch() -> list:
-                async with EdhrecClient(cache=cache) as client:
-                    return await client.commander_cards(report.commanders)
-
-            edhrec: list = _run_network(fetch, [], "EDHREC")
-            md = build_guide(deck, report, sim, combos, edhrec)
+            md = svc.guide(name, games=args.games, pod=pod)
             path = guides_dir / f"{slugify(name)}.md"
             path.write_text(md, encoding="utf-8")
             print(f"Wrote {path}")
-    finally:
-        cache.close()
-        db.close()
+        _print_notes(svc)
     return 0
 
 
@@ -950,37 +909,14 @@ def _cmd_deck_remove(args: argparse.Namespace) -> int:
     return 1
 
 
-def _is_legal_commander_card(card: Card) -> bool:
-    tl = (card.type_line or "").lower()
-    return (("legendary" in tl and "creature" in tl)
-            or "can be your commander" in card.get_oracle_text().lower())
-
-
 def _cmd_deck_build(args: argparse.Namespace) -> int:
-    db = CardDatabase()
-    store = InventoryStore()
-    cache = EdhrecCache()
-    try:
-        commander = db.get_by_name(args.commander)
-        if commander is None:
-            print(f"No card named {args.commander!r}.", file=sys.stderr)
+    with AnalyzerService() as svc:
+        try:
+            deck = svc.build(args.commander, budget=args.budget, owned_only=args.owned_only)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
             return 1
-        if not _is_legal_commander_card(commander):
-            print(f"{commander.name} isn't a legal commander.", file=sys.stderr)
-            return 1
-        owned = store.available_oracles()  # new deck → only loose/Available cards
-
-        async def fetch() -> list:
-            async with EdhrecClient(cache=cache) as client:
-                return await client.commander_cards([commander.name])
-
-        edhrec = asyncio.run(fetch())
-        deck = build_deck(commander, owned, db, edhrec, budget=args.budget,
-                          owned_only=args.owned_only)
-    finally:
-        cache.close()
-        store.close()
-        db.close()
+        _print_notes(svc)
 
     print(f"Built deck for {deck.commander}  [{deck.identity}]  ({deck.total_cards}/100 cards)")
     print(f"Owned: {deck.owned_count} cards · To buy: {deck.buy_count} · Buy cost: ${deck.buy_cost:.2f}\n")
@@ -1013,7 +949,7 @@ def _cmd_deck_suggest_commanders(args: argparse.Namespace) -> int:
     try:
         owned = store.owned_by_oracle()
         commanders = [
-            c for oid in owned if (c := db.get_by_oracle_id(oid)) and _is_legal_commander_card(c)
+            c for oid in owned if (c := db.get_by_oracle_id(oid)) and is_legal_commander_card(c)
         ]
         commanders.sort(key=lambda c: c.edhrec_rank or 10**9)
         if not commanders:
@@ -1166,6 +1102,12 @@ def main(argv: list[str] | None = None) -> int:
     d_guide.add_argument("name", nargs="?", help="saved deck name or file (or use --all)")
     d_guide.add_argument("--all", action="store_true", help="generate guides for every saved deck")
     d_guide.add_argument("--games", type=int, default=8000)
+    d_guide.add_argument("--pod", action="store_true",
+                         help="append pod-matchup outlook + 1v1 matchup-tendencies sections "
+                              "(runs a battle sweep over all saved decks; slow)")
+    d_guide.add_argument("--pod-size", type=int, default=4, help="pod size for --pod (default 4)")
+    d_guide.add_argument("--pod-games", type=int, default=1000,
+                         help="match games per pod for --pod (default 1000)")
     d_guide.set_defaults(func=_cmd_deck_guide)
     d_show = deck.add_parser("show", help="parse + resolve a deck (file or saved name)")
     d_show.add_argument("file", help="deck file path or saved deck name")

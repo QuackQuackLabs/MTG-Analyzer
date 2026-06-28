@@ -130,9 +130,17 @@ def test_layer2_combo_clock_grounds_in_assembly() -> None:
 
 def test_archetype_combo_primary_only_when_assembled_on_curve() -> None:
     # A combo that assembles near the deck's tempo is the primary plan; one that lands far later is a
-    # backup, so a creature-heavy fast deck is classified by its faster plan instead.
-    assert _archetype(30, 3.0, combo_turn=4.0, counts={}, has_combo=True) == "combo"
-    assert _archetype(30, 3.0, combo_turn=11.0, counts={}, has_combo=True) == "aggro"
+    # backup, so a creature-heavy fast deck (low curve) is classified by its faster plan instead.
+    assert _archetype(30, 3.0, combo_turn=4.0, counts={}, has_combo=True, avg_cmc=2.8) == "combo"
+    assert _archetype(30, 3.0, combo_turn=11.0, counts={}, has_combo=True, avg_cmc=2.8) == "aggro"
+
+
+def test_archetype_blitz_value_is_not_aggro() -> None:
+    # Fix #2: a wide creature board with a fast commander but a TOP-HEAVY curve is a big-mana/blitz value
+    # deck, not aggro (e.g. Henzie: 32 creatures, online ~3, but avg CMC ~4.3 with 22 cards at 6+ MV).
+    assert _archetype(32, 3.0, combo_turn=11.0, counts={}, has_combo=True, avg_cmc=4.3) != "aggro"
+    # ...while the same shell with a genuinely low curve stays aggro.
+    assert _archetype(32, 3.0, combo_turn=11.0, counts={}, has_combo=True, avg_cmc=3.0) == "aggro"
 
 
 def test_param_overrides_restores() -> None:
@@ -449,22 +457,26 @@ LOTR_RANKING = ["Sauron", "Tom Bombadil", "Galadriel", "Gandalf the White", "Sm�
 # the decklists are user data and absent from the template repo. Re-snapshot when build_profile changes
 # (e.g. Stage 1 multi-factor equity); the gate then ratchets DOWN as the model improves.
 def _lotr_profiles() -> list[BattleProfile]:
+    # Re-snapshotted after Stage 0.4 (fix #1: aggro pod kill-clock) + fix #2 (blitz-value reclassification).
+    # The only deltas vs. the Stage 0.1 snapshot are the two aggro decks' later clocks (Frodo 3.53→4.83,
+    # Sméagol 4.76→6.06) and their wider sd (1.0→1.7) — none of the LOTR decks reclassify. Live LOTR
+    # rank-distance improved 4→2 under the new model.
     return [
-        prof("Frodo and Sam", archetype="aggro", clock_mean=3.53, clock_sd=1.0, combo_clock=9.07,
+        prof("Frodo and Sam", archetype="aggro", clock_mean=4.83, clock_sd=1.7, combo_clock=9.07,
              interaction=7, sweepers=2, card_advantage=6, has_combo=True, combo_count=3, tutors=3,
-             threat_level=10.23, visibility=1.1, protection=6),
+             threat_level=9.58, visibility=1.1, protection=6),
         prof("Galadriel", archetype="combo", clock_mean=7.69, clock_sd=1.3, combo_clock=None,
              interaction=7, sweepers=0, card_advantage=9, has_combo=True, combo_count=1, tutors=2,
              threat_level=8.15, visibility=0.7, protection=6),
         prof("Gandalf the White", archetype="midrange", clock_mean=7.79, clock_sd=1.4, combo_clock=9.59,
              interaction=11, sweepers=4, card_advantage=15, has_combo=True, combo_count=5, tutors=2,
              threat_level=8.11, visibility=1.0, protection=3),
-        prof("Sauron", archetype="combo", clock_mean=9.56, clock_sd=1.2, combo_clock=None,
-             interaction=13, sweepers=2, card_advantage=10, has_combo=True, combo_count=2, tutors=2,
-             threat_level=7.22, visibility=0.7, protection=5),
-        prof("Sméagol", archetype="aggro", clock_mean=4.76, clock_sd=1.0, combo_clock=10.86,
+        prof("Sauron", archetype="combo", clock_mean=9.65, clock_sd=1.2, combo_clock=None,
+             interaction=13, sweepers=2, card_advantage=9, has_combo=True, combo_count=2, tutors=3,
+             threat_level=7.17, visibility=0.7, protection=5),
+        prof("Sméagol", archetype="aggro", clock_mean=6.06, clock_sd=1.7, combo_clock=10.86,
              interaction=7, sweepers=2, card_advantage=10, has_combo=True, combo_count=8, tutors=2,
-             threat_level=9.62, visibility=1.1, protection=4),
+             threat_level=8.97, visibility=1.1, protection=4),
         prof("Tom Bombadil", archetype="combo", clock_mean=7.73, clock_sd=1.3, combo_clock=None,
              interaction=9, sweepers=3, card_advantage=13, has_combo=True, combo_count=1, tutors=6,
              threat_level=8.13, visibility=0.7, protection=7),
@@ -538,3 +550,37 @@ def test_metagame_feedback_recognizes_winners_and_is_side_effect_free() -> None:
     # weak aggro decks (the old failure — Frodo as the 84% archenemy, Sauron at 0% — is gone).
     assert by["Sauron"].archenemy_rate > by["Frodo and Sam"].archenemy_rate
     assert max(by["Sauron"].archenemy_rate, by["Tom Bombadil"].archenemy_rate) > 0.25
+    # Canonical results table fields: a naive baseline win% is reported for every deck, and the headline
+    # S→D tier tracks power (the proven winner is top-tier, a never-wins aggro deck is bottom-tier).
+    assert all(0.0 <= d.naive_win <= 1.0 for d in res.decks)
+    assert by["Sauron"].tier in ("S", "A")
+    assert by["Frodo and Sam"].tier in ("C", "D")
+
+
+def test_power_tier_boundaries() -> None:
+    from mtg_analyzer.simulation.battle import power_tier
+    assert [power_tier(p) for p in (0.20, 0.09, 0.05, 0.0, -0.05, -0.20)] == \
+        ["S", "S", "A", "B", "C", "D"]
+    # Two decks that DISPLAY the same rounded power (-0.08) must land in the SAME tier (no split).
+    assert power_tier(-0.080) == power_tier(-0.084) == "C"
+
+
+def test_head_to_head_structure_and_anchor() -> None:
+    from mtg_analyzer.simulation.battle import head_to_head
+    decks = [
+        prof("FastCombo", archetype="combo", clock_mean=5.0, has_combo=True, tutors=3),
+        prof("FairMid", archetype="midrange", clock_mean=8.0),
+        prof("SlowGrind", archetype="grind", clock_mean=9.0, interaction=12, card_advantage=14),
+    ]
+    stats = {s.name: s for s in head_to_head(decks, games=800, seed=1)}
+    assert set(stats) == {"FastCombo", "FairMid", "SlowGrind"}
+    for s in stats.values():
+        assert len(s.opponents) == 2                      # N-1 opponents each
+        assert s.opponents == sorted(s.opponents, key=lambda o: o.win_rate, reverse=True)
+        assert 0.0 <= s.avg_win <= 1.0
+        assert set(s.by_archetype) <= {"combo", "midrange", "grind", "control", "aggro"}
+    # Heads-up win rates are zero-sum per pairing (anchor: speed dominates 1v1).
+    fc = {o.name: o.win_rate for o in stats["FastCombo"].opponents}
+    fm = {o.name: o.win_rate for o in stats["FairMid"].opponents}
+    assert abs(fc["FairMid"] + fm["FastCombo"] - 1.0) < 0.02
+    assert fc["FairMid"] >= 0.6                            # the fast combo wins the duel

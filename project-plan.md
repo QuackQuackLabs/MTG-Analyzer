@@ -1,9 +1,9 @@
 # MTG Analyzer — Project Plan
 
 > **Living document — the single source of truth** (per CLAUDE.md). Every agent reads this before
-> starting and updates status/checkboxes when finishing a unit of work. Last updated: **2026-06-23**.
+> starting and updates status/checkboxes when finishing a unit of work. Last updated: **2026-06-25**.
 
-**Status — 139 tests, ruff + mypy clean.**
+**Status — 145 tests, ruff + mypy clean.**
 
 - **Phases 0–8: complete.** Feature-complete for local, chat-driven use: analyze, recommend, simulate,
   build-from-collection, combo/interaction Q&A, collection management + strategy guides, and a heuristic
@@ -17,9 +17,13 @@
   (metagame-knowledge feedback loop + informed-table power ranking). Stage 2 (IS-MCTS search) was
   prototyped and **measured as no ranking gain → full build deferred**; Stage 3 politics audited as
   appropriately secondary.
-- **Next:** Stage 2's full IS-MCTS only if "skillful-timing realism" becomes an explicit goal; otherwise
-  polish (the deferred Stage 1.2/1.3 levers; simplify the near-inert politics knobs) and an
-  opportunistic, anchor-gated corpus fit (X2). Primary interface is chat via Claude Code.
+- **Web app (Phase 10): the next frontier.** Per the 2026-06-27 readiness review, the engine core is
+  web-ready; the missing foundations were a service layer, productized analytics, and a real spec —
+  **P0 now shipped** (`service.AnalyzerService`; `head_to_head`/`power_tier`/pod sections in the engine;
+  Phase 10 spec). **Next: P1** (sims-as-jobs, determinism, API schemas/hardening), then build the UI.
+- **Simulator (Phase 9):** essentially landed (LOTR rank-distance 0). Remaining is optional polish —
+  Stage 2's full IS-MCTS only if "skillful-timing realism" becomes a goal; simplify near-inert politics
+  knobs; opportunistic anchor-gated corpus fit (X2).
 
 ## 1. Vision
 
@@ -146,9 +150,10 @@ Staged: **3a** analysis engine (this) → **3b** recommender + shopping list →
       filling adds (~$4.86) + 8 cut candidates; protects Sol Ring / Nazgûl / Game Changers.*
 - [~] **3b — Budget shopping list:** buy cost + owned vs not-owned via inventory done. TODO:
       functional cheaper-substitute suggestions (same role, lower price).
-- [~] **3c/3d — Web app (FastAPI routes + React views): DEFERRED to publishing (§7).** Primary
-      interface is now chat-driven. Keep the engine UI-agnostic so these can be added later. The
-      existing `/health` FastAPI app + Vite scaffold remain as the seed.
+- [~] **3c/3d — Web app (FastAPI routes + React views):** the old chat-first deferral is superseded —
+      the web UI is now the **next frontier**, specced as **Phase 10** below (readiness checklist + MVP
+      views + API contract). The `/health` FastAPI app + Vite scaffold remain the seed; the new
+      `service.AnalyzerService` facade is the layer the routes call.
 
 ### Phase 4 — Combo & interaction detection  `[x]`
 - [x] **Comprehensive Rules corpus (pulled forward).** `rules/comprehensive.py` auto-discovers the
@@ -519,6 +524,51 @@ captured as `LOTR_RANKING` (`test_anchor_lotr_ordinal_ranking`), the first calib
 the per-deck summary; `diagnose.py` dumps the raw goldfish signals; `experiment.py` is the clock-source
 counterfactual. CLI spot-check: `mtg battle <four decks> --games 2000`.
 
+### Phase 10 — Web app (UI)  `[~]` ← **next frontier**
+
+The chat-first interface stands; the web app is now the active goal. The review (2026-06-27) found the
+engine core web-ready (print-free, model-returning, cached) but three foundations missing. **P0 (the
+prerequisites a UI literally calls) is now shipped; P1 is the next work; then build the UI.**
+
+#### Pre-web readiness checklist
+- **P0.1 — service/facade layer `[x]`** (`mtg_analyzer/service.py`, `AnalyzerService`). One place owns
+  the deck-name → models orchestration (resolve → combos → analyze → goldfish → battle-profile → …)
+  that was trapped in the 1,273-line CLI. Returns engine models, never prints; best-effort network
+  with a `notes` list; manages DB/cache/inventory lifecycle (context manager). CLI handlers
+  (analyze/simulate/guide/battle/metagame/recommend/build) refactored to call it; the API will too.
+- **P0.2 — productized analytics `[x]`.** The metagame table, **`head_to_head` 1v1 matrix**,
+  `power_tier`, per-deck pod ranges, and the guide **Pod-matchup / Matchup-tendencies** sections now
+  live in the engine (`simulation/battle.py` + `analysis/pod_sections.py`), wired into `build_guide`
+  via `extra_sections` and `service.pod_analysis`/`guide(pod=…)` + CLI `mtg deck guide --pod`. They no
+  longer depend on the throwaway scratchpad scripts, so the shipped tool (and the UI) can reproduce them.
+- **P0.3 — this spec `[x]`** (web MVP + API contract below).
+- **P1 (next, before/with the UI):** long-running sims as **jobs** (the 715-pod metagame is ~6 min — not
+  a sync request); **determinism** (archetype label flips grind↔midrange on goldfish noise near the
+  draw≥11 threshold — add hysteresis/seed); **API hardening** (deliberate response schemas — convert
+  the battle dataclasses; offline/rate-limit parity with the CLI); **honesty in the UI** (bands +
+  "relative, not predictive", per docs/sim-results-table-spec.md).
+- **Deferred past the first UI:** 9C-2/3 corpus fit, Stage 2 IS-MCTS, cheaper-substitute shopping
+  suggestions, "suggest combos to add."
+
+#### Web MVP — views (read-first; mutations come later)
+1. **Deck** — import/select → analysis (validation, composition vs targets, curve, bracket, combos).
+2. **Pilot guide** — the `build_guide` markdown, incl. the pod sections when a pod analysis exists.
+3. **Battle / metagame** — single pod (`simulate_match`) + pool metagame (`simulate_metagame`) + the
+   1v1 matrix, rendered in the canonical results-table format.
+4. **Recommend / build** — upgrade list (before/after sim delta) + build-from-collection shopping list.
+
+#### API contract (thin routes over `AnalyzerService`)
+- `GET /health` (exists). `GET /decks`, `GET /decks/{name}/analysis`, `/simulation`, `/guide`,
+  `/recommendations`; `POST /battle`, `POST /metagame`, `POST /head-to-head`, `POST /build`.
+- Routes are **thin**: construct/share one `AnalyzerService`, call it, return models; surface
+  `service.notes` as a `warnings` field. **Versioned, deliberate response schemas** — Pydantic models
+  are returned directly; the battle dataclasses (`BattleProfile`, `MatchResult`, `DeckMetagameStats`,
+  `MatchupStats`) need Pydantic mirrors or `TypeAdapter` serialization (P1).
+- **Sims are jobs, not sync** (P1): `POST` returns a job id; poll `GET /jobs/{id}` for progress/result.
+  Goldfish/single-pod are fast enough to stay sync; metagame/h2h/sensitivity go async. The service
+  methods are sync (run async clients via `asyncio.run`); an async API wraps them in a threadpool.
+- **Single-user/local first** (CORS already pinned to the Vite origin); auth/multi-user is §7.
+
 ## 5. Recommendation engine design (reference)
 
 Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
@@ -563,6 +613,27 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 
 ## 8. Status log
 
+> **Hygiene note (2026-06-27):** this log has grown to 50+ entries and reads as an archive. Entries
+> **before 2026-06-23** are historical detail — a future cleanup should move them to a `CHANGELOG.md`
+> and keep only the recent frontier here (flagged in the readiness review; not yet done).
+
+- **2026-06-27** — **P0 web-readiness shipped (service layer + productized analytics + Phase 10 spec).**
+  From the readiness review (below), did all of P0. **P0.1 — `service.AnalyzerService`:** a single
+  facade owning the deck-name → models orchestration that was trapped in the 1,273-line CLI (resolve →
+  combos → analyze → goldfish → battle-profile → metagame/h2h/guide/recommend/build); returns engine
+  models, never prints, best-effort network via a `notes` list, DB/cache/inventory lifecycle as a
+  context manager. Refactored the core CLI handlers onto it and deduped `is_legal_commander_card`.
+  **P0.2 — productized analytics:** added `head_to_head` (the 1v1 matrix) + `OpponentMatchup`/
+  `MatchupStats` and per-deck pod ranges (`pod_wins`/`naive_min|max[_pod]`) to `simulation/battle.py`;
+  new `analysis/pod_sections.py` renders the **Pod-matchup outlook** + **Matchup-tendencies** sections
+  (data-driven, canonical table via `power_tier`), wired into `build_guide(extra_sections=…)` and
+  `service.pod_analysis`/`guide(pod=…)` + CLI `mtg deck guide --pod`. These no longer depend on the
+  throwaway scratchpad scripts — the shipped engine reproduces them. **P0.3 — Phase 10 spec** (readiness
+  checklist + web MVP views + thin-routes-over-the-service API contract + sims-as-jobs) added above.
+  5 new tests (`head_to_head`, `power_tier`, 3× `pod_sections`); **145 tests, ruff + mypy clean.** Did
+  NOT regenerate the 13 on-disk guides (their bespoke prose is richer than the templated engine output;
+  the capability is what P0 required — `mtg deck guide --all --pod` regenerates via the engine anytime).
+  **Next: P1** (sims-as-jobs, archetype determinism, API response schemas/hardening).
 - **2026-06-17** — Project kickoff. Research completed (3 briefs). Decisions in §2 confirmed with
   user. Foundation scaffolding + skills + docs created.
 - **2026-06-17** — **Phase 0 complete.** Targeted Python 3.11 (installed interpreter; 3.12 not
@@ -948,3 +1019,62 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
   now reports `power_rank`/`power_level`/`archenemy_rate`/`win_rate`; CLI prints `# deck power archenemy%
   win%`. The cranked weight is applied only in the reporting pass (convergence stays stable). Metagame
   test updated to the power-ranking semantics. 138 tests, ruff+mypy clean.
+- **2026-06-25** — **Full-pool metagame sweep + guide refresh (user-driven).** Ran every
+  **C(13,4) = 715 four-deck pod** across all 13 saved decks (1,000 games/pod, seed 1) through both the
+  naive pass and the Stage 3c/3d fictitious-play loop (`simulate_metagame`).
+  Repro script: [docs/research-assets/run_all_pods_fullpool.py](docs/research-assets/run_all_pods_fullpool.py)
+  (builds each `BattleProfile` once in the master and ships it to workers via a Pool initializer — spawn-safe,
+  no per-worker rebuild/network; faithfully mirrors `simulate_metagame`'s damped loop + informed reporting
+  pass). **Regenerated the `Pod matchup outlook (sim)` section in all 13 guides** (`data/guides/*.md`):
+  previously 7 carried a stale 5–6-deck LOTR-only pool and 6 had none; all 13 now share one 715-pod pool
+  with deck-specific naive/informed/range/takeaway prose **plus an embedded full-pool power-ranking table
+  (with a power-level column, this deck's row bolded)** for calibration. (Sections remain hand-composed from
+  the sim output, not auto-emitted by `mtg deck guide`.)
+- **2026-06-25** — **Stage 0.4 (fix #1) + blitz-value reclassification (fix #2) — aggro was systematically
+  under-rated (user-flagged via Henzie).** The full-pool run put Henzie — a strong, fast deck — **dead last
+  (power #13)**. Diagnosis (soft-pod isolation: Henzie + the 3 weakest decks): it was classed **aggro,
+  clock T4.5**, but T4.5 is a *deploy* clock, not a pod *kill* clock — beatdown converts ~0–3% in this model
+  (it can't chew through 120 life + 3 blockers, and there's no overrun mechanic), so Henzie was archenemy
+  **89%** of turns yet won only via its *incidental T11 combo*: all of the heat, none of the kill. Root cause
+  = the same deploy-clock≠win-clock bug Stage 0 fixed for combos, still live on the beatdown path, **plus** a
+  misclassification (Henzie is a big-mana blitz/value deck — avg CMC **4.3**, 22 cards at 6+ MV — not aggro).
+  **Fix #1** (`ARCHETYPE_CLOCK["aggro"]` 1.5→2.8 offset, sd 1.0→1.7): the aggro clock is now a realistic pod
+  kill-clock (the real deploy-speed kernel survives via aggro `visibility` 1.10). **Fix #2** (`_archetype`
+  gated on `AGGRO_MAX_AVG_CMC = 3.6` via new `_avg_cmc`): a top-heavy creature deck is no longer mislabeled
+  aggro (Henzie → midrange; no LOTR deck reclassifies). Re-snapshotted the LOTR anchor from live builds —
+  **rank-distance improved 4 → 2**, all invariants hold (Sauron > Frodo, Galadriel > Sméagol, Frodo < 25%).
+  2 archetype unit tests added/updated; **140 tests, ruff + mypy clean.** Reran the 715-pod sweep (converged
+  in 5 passes); Henzie **#13 → #11**, naive archenemy **70% → 56%**, and at an informed table it posts a
+  competitive **30% win** — no longer the phantom lightning rod, now read as a solid mid-tier deck rather than
+  the worst. **Final learned power ranking (informed):** Sauron (+0.12) ≈ Tom Bombadil (+0.12) > Galadriel
+  (+0.10) > Gandalf (+0.04) > Mishra (+0.03) ≈ Ms. Bumbleflower (+0.03) > Zoraline (+0.01) > Sméagol (−0.06)
+  > Frodo (−0.07) > Cowabunga (−0.07) > Henzie (−0.08) ≈ Zinnia (−0.08) > Bello (−0.09). The two combo titans
+  lead raw win% (49/52%) but draw the most informed heat (57/90% → policed to 20/27%); the fast decks
+  (Frodo 78%, Sméagol 61% **naive** archenemy) finish last raw yet inherit the **highest informed wins**
+  (~29–30%) once the table learns who the real powers are — the clock≠equity / quiet-shark / inherit-the-win
+  effects.
+- **2026-06-25** — **Canonical simulation-results table format (user-driven, research-backed).** Researched
+  how comparable tools present win-rate/metagame data (17Lands: lead with one least-biased metric, suppress
+  sub-sample values; MTGGoldfish/mtgdecks/Untapped: deck · share · win% · count, grouped into S/A/B tiers;
+  win-rate-with-uncertainty practice; data-table design science) and defined ONE canonical schema for every
+  results surface — spec: **[docs/sim-results-table-spec.md](docs/sim-results-table-spec.md)**. Caption
+  (pods · games/pod · seed · informed · "heuristic, relative") then **`# · Deck · Tier · Naive · Informed ·
+  Arch%`**, numerics right-aligned, sorted by learned power, focal row bold. **Tier** = realized meta
+  strength S→D via new `power_tier()` (midpoint cutoffs +0.085/+0.025/−0.025/−0.085 so equal-displayed
+  powers can't split a boundary) — kept distinct from the build-based **Bracket**. The naive↔informed gap
+  *is* the honest band. Wired through: `DeckMetagameStats` gains `naive_win` + a `tier` property;
+  `simulate_metagame` runs a Phase-0 naive baseline sweep; `mtg battle --metagame` and the repro script
+  print the canonical table; all 13 guide tables regenerated to it (`# · Deck · Tier · Naive · Informed ·
+  Arch%`). 2 tests (`test_power_tier_boundaries` + metagame field asserts); 141 tests, ruff + mypy clean.
+- **2026-06-25** — **Guides: added a `Matchup tendencies (1v1)` section (user-driven — "what types of
+  decks will this commander beat vs. be careful against").** Ran the full head-to-head matrix (all
+  C(13,2) = 78 deck pairs, 3,000 games/pairing, seed 1) — repro:
+  [docs/research-assets/run_h2h_matchups.py](docs/research-assets/run_h2h_matchups.py). For each deck the
+  section reports its avg heads-up win% **by opponent archetype** (combo/midrange/aggro), the specific
+  **favored** (≥55%) and **careful** (≤45%) opponents, and a one-line read. The 1v1 lens cleanly isolates
+  the matchup and the model's anchored 1v1 facts show through: **combo is the wall** (nearly every fair
+  deck is a heavy dog to Sauron/Galadriel/Tom), fast decks dominate duels (Tom 78% avg, Frodo 68% — no
+  losing matchup for Tom), and the section explicitly flags the **1v1↔pod divergence** (Frodo wins the
+  duel yet ranks near-last in 4-player because politics gang the fast clock). Inserted after the pod
+  outlook in all 13 guides; data-driven bullets + per-deck hand-written reads. (Guides are gitignored,
+  regenerable.)
