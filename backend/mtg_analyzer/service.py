@@ -22,10 +22,13 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from pydantic_core import to_jsonable_python
+
 from mtg_analyzer.analysis.guide import build_guide
 from mtg_analyzer.analysis.pod_sections import render_matchup_tendencies, render_pod_outlook
 from mtg_analyzer.analysis.report import analyze
 from mtg_analyzer.combos.client import CommanderSpellbookClient
+from mtg_analyzer.combos.store import ComboStore
 from mtg_analyzer.data.db import CardDatabase
 from mtg_analyzer.data.deck_library import load_deck_text, slugify
 from mtg_analyzer.data.inventory_store import InventoryStore
@@ -54,6 +57,13 @@ from mtg_analyzer.simulation.battle import (
 from mtg_analyzer.simulation.goldfish import simulate
 
 T = TypeVar("T")
+
+
+def to_jsonable(obj: Any) -> Any:
+    """JSON-safe representation of any service return — Pydantic models, the battle/service dataclasses
+    (incl. derived fields like `tier`), lists, and nested combinations. The seam the web API serializes
+    responses through, so route code doesn't hand-convert each result type."""
+    return to_jsonable_python(obj)
 
 
 def is_legal_commander_card(card: Card) -> bool:
@@ -97,13 +107,16 @@ class AnalyzerService:
         db: CardDatabase | None = None,
         cache: EdhrecCache | None = None,
         inventory: InventoryStore | None = None,
+        combo_store: ComboStore | None = None,
     ) -> None:
         self._db = db
         self._cache = cache
         self._inventory = inventory
+        self._combo_store = combo_store
         self._owns_db = db is None
         self._owns_cache = cache is None
         self._owns_inventory = inventory is None
+        self._owns_combo_store = combo_store is None
         self.notes: list[str] = []
 
     # --- resource lifecycle (lazy; only opened when first used) ---------------------------------
@@ -125,6 +138,12 @@ class AnalyzerService:
             self._inventory = InventoryStore()
         return self._inventory
 
+    @property
+    def combo_store(self) -> ComboStore:
+        if self._combo_store is None:
+            self._combo_store = ComboStore()
+        return self._combo_store
+
     def close(self) -> None:
         if self._owns_db and self._db is not None:
             self._db.close()
@@ -135,6 +154,9 @@ class AnalyzerService:
         if self._owns_inventory and self._inventory is not None:
             self._inventory.close()
             self._inventory = None
+        if self._owns_combo_store and self._combo_store is not None:
+            self._combo_store.close()
+            self._combo_store = None
 
     def __enter__(self) -> AnalyzerService:
         return self
@@ -160,16 +182,30 @@ class AnalyzerService:
         return deck
 
     def find_combos(self, deck: ResolvedDeck) -> list[Combo]:
-        """Commander Spellbook find-my-combos for a resolved deck (best-effort → [] offline)."""
+        """Combos present in a resolved deck. Cache-backed + offline-robust for determinism: the live
+        Commander Spellbook lookup is cached locally; if it's unavailable, fall back to the local cache
+        so a deck's detected combos (and thus its `BattleProfile` archetype/clock) don't depend on
+        network reachability between runs."""
         main = [e.card.name for e in deck.mainboard if e.card]
         cmds = [e.card.name for e in deck.commanders if e.card]
 
-        async def run() -> list[Combo]:
+        async def run() -> list[Combo] | None:
             async with CommanderSpellbookClient() as client:
                 result = await client.find_my_combos(main=main, commanders=cmds)
             return result.included
 
-        return self._best_effort(run, [], "Combo detection")
+        live = self._best_effort(run, None, "Combo detection")
+        if live is not None:
+            if live:
+                self.combo_store.add(live)  # cache-through for offline determinism next time
+            return live
+        # Offline / rate-limited → uses-based match from the local cache.
+        oracle_ids = {e.card.oracle_id for e in deck.entries
+                      if e.card and e.card.oracle_id}
+        cached = self.combo_store.find_in_deck(oracle_ids).included
+        if cached:
+            self.notes.append(f"Combo detection: used {len(cached)} cached combo(s) (offline).")
+        return cached
 
     def edhrec_cards(self, commander_names: list[str]) -> list:
         async def run() -> list:
@@ -209,9 +245,11 @@ class AnalyzerService:
         return simulate_match(profs, games=games, seed=seed, preset=preset)
 
     def metagame(self, names: list[str], *, pod_size: int = 4, games: int = 1000, seed: int = 1,
-                 sim_games: int = 1500, combos: bool = True) -> MetagameResult:
+                 sim_games: int = 1500, combos: bool = True,
+                 on_progress: Callable[[float, str], None] | None = None) -> MetagameResult:
         profs = self.profiles(names, sim_games=sim_games, combos=combos)
-        return simulate_metagame(profs, pod_size=pod_size, games=games, seed=seed)
+        return simulate_metagame(profs, pod_size=pod_size, games=games, seed=seed,
+                                 on_progress=on_progress)
 
     def head_to_head(self, names: list[str], *, games: int = 3000, seed: int = 1,
                      sim_games: int = 1500, combos: bool = True) -> list[MatchupStats]:
@@ -221,11 +259,13 @@ class AnalyzerService:
     def pod_analysis(
         self, names: list[str], *, pod_size: int = 4, games: int = 1000, h2h_games: int = 3000,
         seed: int = 1, sim_games: int = 1500, combos: bool = True,
+        on_progress: Callable[[float, str], None] | None = None,
     ) -> PodAnalysis:
         """Build each deck's profile ONCE, then run both the metagame loop and the 1v1 matrix over the
         pool. The result feeds `guide(..., pod=...)` so guides carry the pod-matchup sections."""
         profs = self.profiles(names, sim_games=sim_games, combos=combos)
-        meta = simulate_metagame(profs, pod_size=pod_size, games=games, seed=seed)
+        meta = simulate_metagame(profs, pod_size=pod_size, games=games, seed=seed,
+                                 on_progress=on_progress)
         matchups = head_to_head(profs, games=h2h_games, seed=seed)
         return PodAnalysis(metagame=meta, matchups=matchups)
 

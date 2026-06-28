@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import combinations
 
@@ -631,10 +632,11 @@ class DeckMetagameStats:
     naive_min_pod: list[str] = field(default_factory=list)  # ...and the other decks in that pod
     naive_max: float = 0.0   # best single-pod naive win rate...
     naive_max_pod: list[str] = field(default_factory=list)  # ...and the other decks in that pod
+    tier: str = field(init=False)  # S→D meta-strength, derived from power_level (a real field so it
+    #                                serializes for the API, not just a property)
 
-    @property
-    def tier(self) -> str:
-        return power_tier(self.power_level)
+    def __post_init__(self) -> None:
+        self.tier = power_tier(self.power_level)
 
 
 @dataclass
@@ -671,6 +673,7 @@ def simulate_metagame(
     profiles: list[BattleProfile], *, pod_size: int = 4, games: int = 2000, seed: int = 1,
     weight: float | None = None, damp: float | None = None, iterations: int | None = None,
     tol: float = 0.01, informed: bool = True, informed_weight: float | None = None,
+    on_progress: Callable[[float, str], None] | None = None,
 ) -> MetagameResult:
     """Self-consistent metagame via a DAMPED fictitious-play loop (Stage 3c). Each pass simulates every
     `pod_size`-deck pod over the pool, then feeds each deck's realized win rate back as its standing
@@ -705,17 +708,29 @@ def simulate_metagame(
     naive_wr: dict[str, float] = {n: 0.0 for n in names}
     used = 0
     converged = False
+    # Progress accounting: naive baseline (1) + up to `iters` learning passes + 1 informed pass.
+    total_passes = 1 + max(1, iters) + (1 if informed else 0)
+    done = 0
+
+    def _report(msg: str) -> None:
+        if on_progress is not None:
+            on_progress(min(1.0, done / total_passes), msg)
+
     try:
         # Phase 0 — naive baseline (no learned prior; the table doesn't adapt). The canonical results
         # table reports this alongside the informed (policed) win rate — their gap is the honest band.
+        _report("naive baseline")
         P.WINRATE_PRIOR_W = 0.0
         naive_wr, _, naive_pods = _meta_sweep(by, pods, names, games, seed)
+        done += 1
         # Phase 1 — learn the power levels (damped fictitious play at the stable weight).
         P.WINRATE_PRIOR_W = w
         prev: dict[str, float] | None = None
         for it in range(max(1, iters)):
             used = it + 1
+            _report(f"learning power — pass {used}")
             wr, aer, _ = _meta_sweep(by, pods, names, games, seed)
+            done += 1
             for p in profiles:
                 p.win_prior = d * p.win_prior + (1.0 - d) * (wr[p.name] - fair)
             if prev is not None and max(abs(wr[n] - prev[n]) for n in names) < tol:
@@ -725,12 +740,15 @@ def simulate_metagame(
         power = {p.name: p.win_prior for p in profiles}
         # Phase 2 — informed table: KNOW the power levels and target by them (one strong reporting pass).
         if informed:
+            _report("informed reporting pass")
             P.WINRATE_PRIOR_W = iw
             wr, aer, _ = _meta_sweep(by, pods, names, games, seed)
+            done += 1
     finally:
         P.WINRATE_PRIOR_W = saved_w
         for p in profiles:
             p.win_prior = saved_priors[p.name]
+    _report("done")
 
     # Per-deck naive pod range + pod-win counts (the guides' "best/worst vs …" + pod-wins).
     pod_wins = {n: 0 for n in names}

@@ -557,6 +557,17 @@ def test_metagame_feedback_recognizes_winners_and_is_side_effect_free() -> None:
     assert by["Frodo and Sam"].tier in ("C", "D")
 
 
+def test_metagame_reports_progress() -> None:
+    from mtg_analyzer.simulation.battle import simulate_metagame
+    seen: list[tuple[float, str]] = []
+    simulate_metagame(_lotr_profiles(), pod_size=4, games=200, iterations=3,
+                      on_progress=lambda f, m: seen.append((f, m)))
+    assert seen, "no progress reported"
+    assert all(0.0 <= f <= 1.0 for f, _ in seen)            # fractions in range
+    assert seen[-1][0] == 1.0 and seen[-1][1] == "done"     # ends at 100%
+    assert any("learning" in m for _, m in seen)            # phases surfaced
+
+
 def test_power_tier_boundaries() -> None:
     from mtg_analyzer.simulation.battle import power_tier
     assert [power_tier(p) for p in (0.20, 0.09, 0.05, 0.0, -0.05, -0.20)] == \

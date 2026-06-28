@@ -3,7 +3,7 @@
 > **Living document — the single source of truth** (per CLAUDE.md). Every agent reads this before
 > starting and updates status/checkboxes when finishing a unit of work. Last updated: **2026-06-25**.
 
-**Status — 145 tests, ruff + mypy clean.**
+**Status — 152 tests, ruff + mypy clean.**
 
 - **Phases 0–8: complete.** Feature-complete for local, chat-driven use: analyze, recommend, simulate,
   build-from-collection, combo/interaction Q&A, collection management + strategy guides, and a heuristic
@@ -542,11 +542,20 @@ prerequisites a UI literally calls) is now shipped; P1 is the next work; then bu
   via `extra_sections` and `service.pod_analysis`/`guide(pod=…)` + CLI `mtg deck guide --pod`. They no
   longer depend on the throwaway scratchpad scripts, so the shipped tool (and the UI) can reproduce them.
 - **P0.3 — this spec `[x]`** (web MVP + API contract below).
-- **P1 (next, before/with the UI):** long-running sims as **jobs** (the 715-pod metagame is ~6 min — not
-  a sync request); **determinism** (archetype label flips grind↔midrange on goldfish noise near the
-  draw≥11 threshold — add hysteresis/seed); **API hardening** (deliberate response schemas — convert
-  the battle dataclasses; offline/rate-limit parity with the CLI); **honesty in the UI** (bands +
-  "relative, not predictive", per docs/sim-results-table-spec.md).
+- **P1 — foundations (mostly shipped):**
+  - **Determinism `[x]`** — the real cause wasn't goldfish RNG (the goldfish is seeded, `seed=0`); it was
+    that `has_combo`/`combo_turn` came from the *live* Commander Spellbook lookup, so a deck classified
+    differently offline vs. online (e.g. Galadriel combo→midrange). Fixed: `service.find_combos` is now
+    **cache-backed + offline-robust** (live → cache-through; offline → local `ComboStore` match), so a
+    deck's profile (archetype/clock/tier) no longer depends on network reachability.
+  - **API serializability `[x]`** — `service.to_jsonable` (via `pydantic_core`) serializes every return
+    (Pydantic models + the battle/service dataclasses, nested); `DeckMetagameStats.tier` promoted from a
+    property to a derived field so it serializes. Offline/rate-limit parity via the service `notes` list.
+  - **Sims-as-jobs `[x]`** — `jobs.JobRunner` (thread-pool, pollable status/progress/result, error
+    capture); `simulate_metagame(on_progress=…)` reports per-pass; `service.metagame`/`pod_analysis`
+    thread it through. The web API owns a `JobRunner` and submits `lambda report: svc.metagame(…,
+    on_progress=report)`. **Still open (with the UI):** full versioned route schemas; **honesty in the
+    UI** (bands + "relative, not predictive", per docs/sim-results-table-spec.md).
 - **Deferred past the first UI:** 9C-2/3 corpus fit, Stage 2 IS-MCTS, cheaper-substitute shopping
   suggestions, "suggest combos to add."
 
@@ -617,6 +626,18 @@ Four-stage funnel (full detail in the **`mtg-data-ecosystem`** skill):
 > **before 2026-06-23** are historical detail — a future cleanup should move them to a `CHANGELOG.md`
 > and keep only the recent frontier here (flagged in the readiness review; not yet done).
 
+- **2026-06-28** — **P1 web-readiness foundations shipped (determinism + API serializability + sims-as-jobs).**
+  **Determinism:** root-caused the archetype instability — not goldfish RNG (seeded `seed=0`) but the
+  *live* combo lookup making `has_combo`/`combo_turn` network-dependent (a deck flips combo↔midrange
+  offline). Fixed `service.find_combos` to be **cache-backed + offline-robust** (live → `ComboStore`
+  cache-through; offline → uses-based local match), so a deck's profile is stable regardless of network.
+  **API serializability:** `service.to_jsonable` (pydantic_core) serializes all returns incl. the battle
+  dataclasses; `DeckMetagameStats.tier` promoted property→derived field so it serializes. **Sims-as-jobs:**
+  new `jobs.JobRunner` (thread pool, pollable progress/result/error) + `simulate_metagame(on_progress=…)`
+  per-pass reporting, threaded through `service.metagame`/`pod_analysis` — the API will submit long sims
+  to a `JobRunner` and poll. 7 new tests (3 service, 2 jobs, 1 metagame-progress, 1 serialization);
+  **152 tests, ruff + mypy clean.** Remaining for the UI phase: versioned route schemas + UI honesty
+  framing. **P0+P1 done → ready to build the web app.**
 - **2026-06-27** — **P0 web-readiness shipped (service layer + productized analytics + Phase 10 spec).**
   From the readiness review (below), did all of P0. **P0.1 — `service.AnalyzerService`:** a single
   facade owning the deck-name → models orchestration that was trapped in the 1,273-line CLI (resolve →
